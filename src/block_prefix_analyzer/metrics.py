@@ -1,75 +1,143 @@
-"""Metric definitions and aggregations — V1 skeleton.
+"""Metric aggregation over replay results — V1.
 
-Definitions below are **frozen** for V1. Changing them is a breaking change
-that must update CLAUDE.md, IMPLEMENTATION_PLAN.md, and the golden tests.
+This module receives a stream of :class:`~block_prefix_analyzer.replay.PerRequestResult`
+values produced by the replay engine and collapses them into a single
+:class:`MetricsSummary`.  It never re-scans raw block sequences or
+maintains its own index.
 
-Metric glossary
----------------
-``block_level_reusable_ratio``
-    Loosest metric. A block counts as *reusable* if the same block id
-    appeared in any strictly earlier request (by canonical sort order). Both
-    ``micro`` (Σ hits / Σ total blocks across all non-empty requests) and
-    ``macro`` (mean of per-request ratios) aggregations are reported.
+Metric semantics (frozen V1 definitions)
+-----------------------------------------
+Two reuse metrics are tracked; they have **different semantics** and
+should not be conflated:
 
-``prefix_aware_ideal_hit_ratio``
-    Main metric. Only the **contiguous prefix from the start of the request**
-    counts as a hit. Once the first miss appears, all later blocks in the
-    same request are non-hits, even if they individually appeared before.
-    Both ``micro`` and ``macro`` aggregations are reported.
+``overall_prefix_hit_rate``
+    Fraction of blocks that were part of a **contiguous prefix hit** from
+    the start of the request.  A miss at any position terminates the hit
+    run; later blocks in the same request do not count even if they were
+    seen before.  This is the stricter, main metric.
 
-``token_level_prefix_hit_ratio``
-    Map the reusable prefix block count back to tokens. Requires
-    ``block_size``. The final block of a request may be partial; V1 will
-    pick a single convention (full block vs. remainder tokens) and document
-    it when the metric is implemented.
+    Formula: ``Σ prefix_hit_blocks  /  Σ total_blocks``
+    (denominator sums only over non-empty requests; see below)
 
-``reuse_time``
-    For a block reused by a later request::
+``overall_block_level_reusable_ratio``
+    Fraction of block positions that had been seen in *any* earlier request,
+    regardless of whether they formed a contiguous prefix.  Duplicate block
+    ids within one request are each counted per position, not deduplicated.
 
-        reuse_time = current_request_time - previous_reuse_reference_time
+    Formula: ``Σ reusable_block_count  /  Σ total_blocks``
+    (same denominator: non-empty requests only)
 
-    V1 default: ``previous_reuse_reference_time = last_seen``. Units match
-    the input timestamps; see ``metadata["time_unit"]`` advisory field.
-    Full implementation deferred to Step 5.
+Denominator rule (frozen)
+--------------------------
+* Requests with ``total_blocks == 0`` (empty ``block_ids``) are **excluded
+  from all ratio denominators**.  They are still counted in
+  ``request_count`` and may appear in ``cold_start_request_count``.
+* When the denominator is 0 (all requests are empty), both ratios are
+  returned as ``0.0``.
 
-``block_lifespan`` (optional, may be deferred to V2)
-    Time from a block's first appearance to its final reuse / final
-    appearance under the chosen definition.
-
-Aggregation edge cases (frozen V1 decisions)
---------------------------------------------
-* Records with **empty ``block_ids``** are *excluded* from all hit-rate
-  denominators. They remain in the result stream for counting purposes only.
-  This is intentional: an empty sequence carries no prefix information.
-* The **first record** (by canonical ``(timestamp, arrival_index)`` order)
-  has no prior records to match; it is guaranteed to have
-  ``prefix_hit_blocks == 0``. It *is* included in the denominator. This
-  models a cold-start cache: the first request always misses completely.
-
-The functions below are stubs; Step 5 implements them.
+``cold_start_request_count``
+    Any request where ``prefix_hit_blocks == 0``, including the first
+    request and any request that starts with a block never seen before.
+    Empty-block requests have ``prefix_hit_blocks == 0`` and are included.
 """
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from .replay import PerRequestResult
 
 
-def prefix_aware_ideal_hit_ratio(
-    results: Iterable[PerRequestResult],
-) -> dict[str, float]:
-    """Return ``{"micro": ..., "macro": ...}`` for prefix-aware ideal hits.
+@dataclass(frozen=True)
+class MetricsSummary:
+    """Aggregated replay metrics for a complete trace.
 
-    V1 skeleton — implemented in Step 5.
+    Designed to be consumed by the reporting layer (:mod:`block_prefix_analyzer.reports`)
+    without further computation.  All ratio fields are pre-calculated.
+
+    Attributes
+    ----------
+    request_count:
+        Total number of records processed, including empty-block requests.
+    non_empty_request_count:
+        Number of records with ``total_blocks > 0``.
+    cold_start_request_count:
+        Number of records with ``prefix_hit_blocks == 0``.
+    total_blocks:
+        Sum of ``total_blocks`` over **non-empty** requests only.
+        This is the denominator used for both ratio metrics.
+    total_prefix_hit_blocks:
+        Sum of ``prefix_hit_blocks`` over all requests (empty requests
+        contribute 0).
+    total_reusable_blocks:
+        Sum of ``reusable_block_count`` over all requests (empty requests
+        contribute 0).
+    overall_prefix_hit_rate:
+        ``total_prefix_hit_blocks / total_blocks``; ``0.0`` when
+        ``total_blocks == 0``.
+    overall_block_level_reusable_ratio:
+        ``total_reusable_blocks / total_blocks``; ``0.0`` when
+        ``total_blocks == 0``.
     """
-    raise NotImplementedError("implemented in Step 5; see IMPLEMENTATION_PLAN.md")
+
+    request_count: int
+    non_empty_request_count: int
+    cold_start_request_count: int
+    total_blocks: int
+    total_prefix_hit_blocks: int
+    total_reusable_blocks: int
+    overall_prefix_hit_rate: float
+    overall_block_level_reusable_ratio: float
 
 
-def block_level_reusable_ratio(
-    results: Iterable[PerRequestResult],
-) -> dict[str, float]:
-    """Return ``{"micro": ..., "macro": ...}`` for block-level reusability.
+def compute_metrics(results: Iterable[PerRequestResult]) -> MetricsSummary:
+    """Aggregate a stream of per-request replay results into :class:`MetricsSummary`.
 
-    V1 skeleton — implemented in Step 5.
+    This function is a pure aggregation; it does not re-run replay, does not
+    access any prefix index, and does not re-scan raw block sequences.
+
+    Parameters
+    ----------
+    results:
+        Iterable of :class:`~block_prefix_analyzer.replay.PerRequestResult`
+        values, typically the output of :func:`~block_prefix_analyzer.replay.replay`.
+        The iterable is consumed exactly once and converted to a list
+        internally.
+
+    Returns
+    -------
+    MetricsSummary
+        Aggregated metrics.  All fields are well-defined even for an empty
+        input (all counts are 0, all ratios are 0.0).
     """
-    raise NotImplementedError("implemented in Step 5; see IMPLEMENTATION_PLAN.md")
+    rows = list(results)
+
+    request_count = len(rows)
+    non_empty_rows = [r for r in rows if r.total_blocks > 0]
+    non_empty_request_count = len(non_empty_rows)
+    cold_start_request_count = sum(1 for r in rows if r.prefix_hit_blocks == 0)
+
+    # Denominator: blocks from non-empty requests only
+    total_blocks = sum(r.total_blocks for r in non_empty_rows)
+
+    # Numerators: sum over all rows (empty rows contribute 0 naturally)
+    total_prefix_hit_blocks = sum(r.prefix_hit_blocks for r in rows)
+    total_reusable_blocks = sum(r.reusable_block_count for r in rows)
+
+    if total_blocks > 0:
+        prefix_hit_rate = total_prefix_hit_blocks / total_blocks
+        reusable_ratio = total_reusable_blocks / total_blocks
+    else:
+        prefix_hit_rate = 0.0
+        reusable_ratio = 0.0
+
+    return MetricsSummary(
+        request_count=request_count,
+        non_empty_request_count=non_empty_request_count,
+        cold_start_request_count=cold_start_request_count,
+        total_blocks=total_blocks,
+        total_prefix_hit_blocks=total_prefix_hit_blocks,
+        total_reusable_blocks=total_reusable_blocks,
+        overall_prefix_hit_rate=prefix_hit_rate,
+        overall_block_level_reusable_ratio=reusable_ratio,
+    )

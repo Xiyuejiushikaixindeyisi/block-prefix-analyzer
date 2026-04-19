@@ -3,14 +3,37 @@
 The engine has exactly three responsibilities:
 
 1. Sort records by the canonical ``(timestamp, arrival_index)`` key.
-2. For each record in order: query the prefix index for the current record's
-   block sequence (measuring reuse against *previous* requests only).
-3. Insert the record's block sequence into the index so it is visible to
-   future requests.
+2. For each record in order: query the prefix index and the seen-block set
+   to measure reuse against *previous* requests only.
+3. Update both the prefix index and the seen-block set after yielding, so
+   future records can match against this one.
 
-The query-before-insert ordering is the core invariant.  It must never be
-relaxed, because it is the sole mechanism that prevents self-hit: when a
-record is queried, the index contains only strictly earlier records.
+Processing order per record (must not be reordered)
+---------------------------------------------------
+1. **Query** — ``index.longest_prefix_match(record.block_ids)``
+              + ``sum(1 for b in block_ids if b in seen_blocks)``
+2. **Yield** — emit a :class:`PerRequestResult` with both measurements
+3. **Insert** — ``index.insert(record.block_ids)``
+              + ``seen_blocks.update(record.block_ids)``
+
+This guarantees **no self-hit** for both metrics: when a record is queried,
+neither the prefix index nor the seen-block set contains any data from the
+current record.
+
+Two distinct reuse semantics
+-----------------------------
+``prefix_hit_blocks``
+    Counts only the **contiguous prefix from the start of the request**
+    that matches a path already in the prefix index.  Once the first block
+    position fails to match, all later positions are non-hits even if the
+    individual block ids were seen before.  This is the stricter, main metric.
+
+``reusable_block_count``
+    Counts **every position** in the current request whose block id appeared
+    in *any* earlier request, regardless of contiguity.  If block id ``A``
+    was seen before and the current request is ``[A, A, B]``, both ``A``
+    positions count (``reusable_block_count == 2``), even if ``B`` has never
+    appeared before.  This is the looser, auxiliary metric.
 
 This module is intentionally narrow.  It produces raw per-request results
 only; metric aggregation belongs in :mod:`block_prefix_analyzer.metrics`.
@@ -23,7 +46,7 @@ from typing import Callable
 
 from .index.base import PrefixIndex
 from .index.trie import TrieIndex
-from .types import RequestRecord, sort_records
+from .types import BlockId, RequestRecord, sort_records
 
 
 @dataclass
@@ -41,16 +64,21 @@ class PerRequestResult:
     timestamp:
         Copied from the source record; unit is unchanged and never rescaled.
     arrival_index:
-        Copied from the source record; reflects file-read order assigned by
-        the loader.
+        Copied from the source record; reflects file-read order from loader.
     total_blocks:
-        ``len(record.block_ids)``.  Zero for records with an empty sequence.
+        ``len(record.block_ids)``.  Zero for empty-sequence records.
     prefix_hit_blocks:
-        Number of leading blocks that matched a path already present in the
-        prefix index at the time this request was processed — i.e. the result
-        of ``index.longest_prefix_match(block_ids)`` evaluated **before**
-        the record was inserted.  Zero for the first request (cold start)
-        and for any request whose first block has not been seen before.
+        Contiguous prefix hit count — the result of
+        ``index.longest_prefix_match(block_ids)`` evaluated **before** the
+        record was inserted.  Zero for the first record (cold start) and for
+        any record whose first block has not been seen before.
+    reusable_block_count:
+        Per-position reusability count.  For each position ``i`` in
+        ``block_ids``, if ``block_ids[i]`` appeared in any strictly earlier
+        request, that position is counted.  Duplicate block ids within the
+        current request are each counted independently (position-based, not
+        set-based).  See module docstring for the semantic distinction from
+        ``prefix_hit_blocks``.
     """
 
     request_id: str
@@ -58,6 +86,7 @@ class PerRequestResult:
     arrival_index: int
     total_blocks: int
     prefix_hit_blocks: int
+    reusable_block_count: int
 
 
 IndexFactory = Callable[[], PrefixIndex]
@@ -70,32 +99,21 @@ def replay(
 ) -> Iterator[PerRequestResult]:
     """Replay records in canonical order, yielding one result per record.
 
-    Processing order per record (must not be reordered)
-    ---------------------------------------------------
-    1. **Query** — ``index.longest_prefix_match(record.block_ids)``
-    2. **Yield** — emit a :class:`PerRequestResult` carrying the measurement
-    3. **Insert** — ``index.insert(record.block_ids)``
-
-    This guarantees no self-hit: the index never contains the current record
-    while it is being queried.  The first record always yields
-    ``prefix_hit_blocks == 0``.
-
-    Records with empty ``block_ids`` pass through without error: both
-    ``total_blocks`` and ``prefix_hit_blocks`` are 0, and the insert call is
-    a no-op (enforced by the :class:`~block_prefix_analyzer.index.trie.TrieIndex`
-    contract).
+    See module docstring for the query-before-insert contract and the
+    semantic distinction between ``prefix_hit_blocks`` and
+    ``reusable_block_count``.
 
     Parameters
     ----------
     records:
         Any iterable of :class:`~block_prefix_analyzer.types.RequestRecord`.
         The engine always applies :func:`~block_prefix_analyzer.types.sort_records`
-        internally; callers must not assume the output order matches the input
-        order.
+        internally; callers must not assume the output order matches the input.
     index_factory:
-        Zero-arg callable returning a fresh :class:`~block_prefix_analyzer.index.base.PrefixIndex`.
+        Zero-arg callable returning a fresh
+        :class:`~block_prefix_analyzer.index.base.PrefixIndex`.
         Defaults to :class:`~block_prefix_analyzer.index.trie.TrieIndex`.
-        Override in tests to inject a spy or an alternative implementation.
+        Override in tests to inject a spy or alternative implementation.
 
     Yields
     ------
@@ -104,20 +122,23 @@ def replay(
     """
     sorted_records = sort_records(list(records))
     index: PrefixIndex = index_factory()
+    seen_blocks: set[BlockId] = set()
 
     for record in sorted_records:
-        # Step 1: query BEFORE insert to prevent self-hit
+        # Step 1: measure against prior state only (no self-hit)
         prefix_hit = index.longest_prefix_match(record.block_ids)
+        reusable_count = sum(1 for bid in record.block_ids if bid in seen_blocks)
 
-        # Step 2: emit result while index still reflects only prior records
+        # Step 2: emit result while state still reflects only prior records
         yield PerRequestResult(
             request_id=record.request_id,
             timestamp=record.timestamp,
             arrival_index=record.arrival_index,
             total_blocks=len(record.block_ids),
             prefix_hit_blocks=prefix_hit,
+            reusable_block_count=reusable_count,
         )
 
-        # Step 3: insert AFTER yielding — this request becomes visible to
-        # future requests only from this point forward
+        # Step 3: update state so this record is visible to future records
         index.insert(record.block_ids)
+        seen_blocks.update(record.block_ids)

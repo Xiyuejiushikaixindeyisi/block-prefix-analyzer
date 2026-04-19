@@ -32,6 +32,15 @@
   - 冻结 "query → yield → insert" 顺序；首请求冷启动命中 0；无 self-hit 由 SpyIndex 验证
   - `tests/test_replay.py` 全部通过（22 个测试）
 
+- [x] **Step 5 — Metrics 聚合**
+  - `PerRequestResult` 新增 `reusable_block_count`（按位置计数，不去重）
+  - replay 内维护 `seen_blocks` 集合，严格在 yield 之后更新，保持无 self-hit
+  - `MetricsSummary`（frozen dataclass）：6 个计数/汇总字段 + 2 个预算比率
+  - `compute_metrics(results) -> MetricsSummary`：纯聚合，不重扫 block 序列
+  - 分母仅含 non-empty 请求；全 empty 时比率安全返回 0.0
+  - `tests/test_replay.py` 扩充 7 个 reusable 语义测试（共 29 个）
+  - `tests/test_metrics.py` 全部通过（18 个测试，含端到端集成测试）
+
 ---
 
 ## 后续步骤

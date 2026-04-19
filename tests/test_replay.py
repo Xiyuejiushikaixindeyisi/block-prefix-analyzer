@@ -346,3 +346,57 @@ def test_result_fields_have_correct_types() -> None:
     assert isinstance(res.arrival_index, int)
     assert isinstance(res.total_blocks, int)
     assert isinstance(res.prefix_hit_blocks, int)
+    assert isinstance(res.reusable_block_count, int)
+
+
+# ---------------------------------------------------------------------------
+# 20-26. reusable_block_count — per-position block-level reusability
+# ---------------------------------------------------------------------------
+
+def test_reusable_block_count_cold_start_is_zero() -> None:
+    r = _make("a", 1, 0, [1, 2, 3])
+    assert list(replay([r]))[0].reusable_block_count == 0
+
+
+def test_reusable_block_count_full_match_on_second_request() -> None:
+    r1 = _make("a", 1, 0, [1, 2, 3])
+    r2 = _make("b", 2, 1, [1, 2, 3])
+    results = list(replay([r1, r2]))
+    assert results[1].reusable_block_count == 3
+
+
+def test_reusable_block_count_partial_seen() -> None:
+    r1 = _make("a", 1, 0, [1, 2, 3])
+    r2 = _make("b", 2, 1, [1, 2, 9])  # 9 never seen
+    results = list(replay([r1, r2]))
+    assert results[1].reusable_block_count == 2  # positions 0,1 are reusable
+
+
+def test_reusable_count_higher_than_prefix_hit_when_not_contiguous() -> None:
+    # r2 starts with 9 (not seen) then 2, 3 (both seen)
+    # prefix_hit = 0 (first block 9 not in index), reusable = 2 (2 and 3 seen)
+    r1 = _make("a", 1, 0, [1, 2, 3])
+    r2 = _make("b", 2, 1, [9, 2, 3])
+    results = list(replay([r1, r2]))
+    assert results[1].prefix_hit_blocks == 0
+    assert results[1].reusable_block_count == 2
+
+
+def test_reusable_count_positions_not_deduplicated() -> None:
+    # The spec example: history has A; current is [A, A, B]
+    # Both A-positions count; B does not → reusable_block_count == 2
+    r1 = _make("a", 1, 0, ["A"])
+    r2 = _make("b", 2, 1, ["A", "A", "B"])
+    results = list(replay([r1, r2]))
+    assert results[1].reusable_block_count == 2
+
+
+def test_reusable_count_no_self_hit() -> None:
+    # A single request must not count its own blocks as reusable
+    r = _make("a", 1, 0, [5, 6, 7])
+    assert list(replay([r]))[0].reusable_block_count == 0
+
+
+def test_reusable_count_empty_block_ids() -> None:
+    r = _make("a", 1, 0, [])
+    assert list(replay([r]))[0].reusable_block_count == 0
