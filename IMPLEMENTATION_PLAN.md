@@ -41,6 +41,15 @@
   - `tests/test_replay.py` 扩充 7 个 reusable 语义测试（共 29 个）
   - `tests/test_metrics.py` 全部通过（18 个测试，含端到端集成测试）
 
+- [x] **Step 6 — Summary 与输出层**
+  - `format_summary(MetricsSummary) -> str`：固定两列格式，整数 12 位右对齐，比率转换为 `%.4f%`
+  - `summary_to_dict()` / `write_json()`：`dataclasses.asdict()` 直接序列化，key = 字段名
+  - `csv_header()` / `summary_to_csv_row()` / `write_csv()`：`dataclasses.fields()` 保证 header 与 row 永远对齐
+  - `write_text()`：写出 `format_summary` 文本 + 尾换行
+  - 标准库实现，无第三方依赖
+  - `tests/test_summary.py` 全部通过（29 个测试）
+  - **V1 主链路闭环**：132 passed, 0 skipped
+
 ---
 
 ## 后续步骤
