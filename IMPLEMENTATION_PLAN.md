@@ -19,55 +19,23 @@
 
 - [x] **Step 2 — PrefixIndex 接口与简单 Trie**
   - `TrieIndex.insert` + `TrieIndex.longest_prefix_match` 实现（等值匹配，O(L)，无路径压缩）
-  - `tests/test_trie.py` 全部通过（9 个具名测试用例，覆盖空 trie / 单插入 / 分叉 / 幂等 / 共享前缀 / 重复 block / 增量）
+  - `tests/test_trie.py` 全部通过（14 个具名测试用例）
+
+- [x] **Step 3 — JSONL Loader**
+  - `LoadError(ValueError)`：fail-fast，含 1-based 行号
+  - 强制字段 `request_id` / `timestamp` / `block_ids`；`arrival_index` 始终由 loader 按非空行顺序分配
+  - `metadata` 原样保留（`time_unit` 等 key 不修改）
+  - `tests/test_jsonl_loader.py` 全部通过（24 个测试）
+
+- [x] **Step 4 — 回放引擎**
+  - `replay(records, index_factory=TrieIndex) -> Iterator[PerRequestResult]`
+  - 冻结 "query → yield → insert" 顺序；首请求冷启动命中 0；无 self-hit 由 SpyIndex 验证
+  - `tests/test_replay.py` 全部通过（22 个测试）
 
 ---
 
 ## 后续步骤
 
-### Step 3 — JSONL Loader（test: loader 转绿）
-**目标**：从 JSONL 读取最小字段集，严格分配 `arrival_index`，应用稳定排序。
-
-**改动**：
-- `src/block_prefix_analyzer/io/jsonl_loader.py`：
-  - 强制字段：`request_id`, `timestamp`, `block_ids`。
-  - 可选：`token_count`, `block_size`, `metadata`。
-  - `arrival_index` 由 loader 按读取顺序分配（用户字段被忽略并记录 warning 级提示）。
-  - 返回按 `(timestamp, arrival_index)` 排序的 `list[RequestRecord]`。
-
----
-
-### Step 3 — JSONL Loader（test: loader 转绿）
-**目标**：从 JSONL 读取最小字段集，严格分配 `arrival_index`，应用稳定排序。
-
-**改动**：
-- `src/block_prefix_analyzer/io/jsonl_loader.py`：
-  - 强制字段：`request_id`, `timestamp`, `block_ids`。
-  - 可选：`token_count`, `block_size`, `metadata`。
-  - `arrival_index` 由 loader 按读取顺序分配（用户字段被忽略并记录 warning 级提示）。
-  - 返回按 `(timestamp, arrival_index)` 排序的 `list[RequestRecord]`。
-- `tests/test_jsonl_loader.py`：
-  - 同时间戳样本的顺序保留。
-  - 缺字段 / 类型错误时报明确异常。
-  - 空 `block_ids` 的处理策略（保留并留给 metrics 决定是否剔除）。
-
----
-
-### Step 4 — 回放引擎（test: replay 转绿）
-**目标**：实现 V1 核心环 —— 对每条请求先算前缀指标，再插入索引；保证 no self-hit。
-
-**改动**：
-- `src/block_prefix_analyzer/replay.py`：
-  - 函数式 API：`replay(records, index_factory=TrieIndex) -> Iterator[PerRequestResult]`。
-  - `PerRequestResult` 至少包含：`request_id`, `total_blocks`, `prefix_hit_blocks`, `timestamp`, `arrival_index`。
-  - 禁止调用方在 yield 之前看到索引已写入；实现上明确 "measure → insert" 顺序。
-- `tests/test_replay.py`：
-  - **首请求** 永远得到 `prefix_hit_blocks == 0`。
-  - 两条完全相同的请求：第二条必须命中全部 block（用于排除"多算自己"）。
-  - 相同 timestamp、不同 arrival_index 的请求：后到者能命中前者。
-  - 长链式共享前缀场景下的增量命中正确。
-
----
 
 ### Step 5 — Metrics（test: metrics 转绿）
 **目标**：把 per-request 结果聚合成报告指标，**micro + macro 双口径同时输出**。
@@ -118,9 +86,13 @@
 
 ---
 
-## 未决问题（等待人类确认）
-1. `block_ids` 空的请求是否计入分母？（当前倾向：剔除，可由标志位切换）
-2. `reuse_time` 的时间戳单位是否由 metadata 里的 `time_unit` 字段声明？
-3. 首个请求是否计入分母？（当前倾向：计入，hit 计 0，贴合冷启动）
-4. 本地分支是 `master`，Spec 推荐 `main`；是否需要改名？
-5. CSV / JSONL 输出的字段命名惯例（snake_case 已定，但具体字段名需要 Step 6 再确认）。
+## 冻结的设计决定（已确认）
+1. **空 `block_ids`**：记录保留在流中，但**排除出所有命中率分母**。
+2. **首条请求**：计入分母，命中记 0（冷启动语义）。
+3. **分支名**：已改为 `main`。
+4. **`metadata["time_unit"]`**：Loader 原样保留；analyzer 核心层不读不转换。
+5. **`arrival_index`**：始终由 loader 按文件行序分配，JSON 字段被静默覆盖。
+
+## 待 Step 6 确认的细节
+- CSV / JSONL 输出的具体字段名（snake_case 已确认，字段集 Step 6 再定）。
+- `block_level_reusable_ratio` 所需的 per-block 可见性数据结构（Step 5 设计时需补充到 `PerRequestResult` 或另行传入）。
