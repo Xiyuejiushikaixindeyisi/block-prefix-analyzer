@@ -110,6 +110,7 @@ def build_block_records_from_raw_requests(
             arrival_index=arrival_index,
             block_ids=result.block_ids,
             token_count=len(token_ids),
+            block_size=_builder.block_size,
             metadata=meta,
         ))
 
