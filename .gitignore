@@ -41,3 +41,12 @@ Thumbs.db
 # Project-specific scratch space
 scratch/
 *.local.*
+
+# Generated outputs (reproducible from source + data)
+outputs/
+
+# Internal / non-public data
+data/internal/
+
+# Public data files (large; download separately — keep .gitkeep)
+data/public/*.jsonl
