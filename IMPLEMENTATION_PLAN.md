@@ -50,6 +50,15 @@
   - `tests/test_summary.py` 全部通过（29 个测试）
   - **V1 主链路闭环**：132 passed, 0 skipped
 
+- [x] **Step 7 — 端到端 Golden 测试**
+  - `tests/fixtures/minimal.jsonl` — 线性前缀积累（3 请求）
+  - `tests/fixtures/forking.jsonl` — 共享前缀 + 多分叉（4 请求）
+  - `tests/fixtures/with_empty.jsonl` — 空 `block_ids` + reusable > prefix_hit（3 请求）
+  - 对应 3 个 `.golden.json`，存储逐条 `replay_rows` + `MetricsSummary`
+  - `UPDATE_GOLDENS=1 pytest` 更新机制；golden 缺失时 fail-fast 并提示命令
+  - `tests/test_golden.py`：3 个端到端管道测试 + 10 个语义断言测试（共 13 个）
+  - **V1 全部完成**：145 passed, 0 skipped
+
 ---
 
 ## 后续步骤

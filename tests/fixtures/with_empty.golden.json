@@ -1,0 +1,38 @@
+{
+  "replay_rows": [
+    {
+      "request_id": "sys",
+      "timestamp": 100,
+      "arrival_index": 0,
+      "total_blocks": 3,
+      "prefix_hit_blocks": 0,
+      "reusable_block_count": 0
+    },
+    {
+      "request_id": "heartbeat",
+      "timestamp": 150,
+      "arrival_index": 1,
+      "total_blocks": 0,
+      "prefix_hit_blocks": 0,
+      "reusable_block_count": 0
+    },
+    {
+      "request_id": "user",
+      "timestamp": 200,
+      "arrival_index": 2,
+      "total_blocks": 3,
+      "prefix_hit_blocks": 0,
+      "reusable_block_count": 2
+    }
+  ],
+  "metrics": {
+    "request_count": 3,
+    "non_empty_request_count": 2,
+    "cold_start_request_count": 3,
+    "total_blocks": 6,
+    "total_prefix_hit_blocks": 0,
+    "total_reusable_blocks": 2,
+    "overall_prefix_hit_rate": 0.0,
+    "overall_block_level_reusable_ratio": 0.3333333333333333
+  }
+}
