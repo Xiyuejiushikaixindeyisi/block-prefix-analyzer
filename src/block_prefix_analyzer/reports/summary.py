@@ -71,10 +71,10 @@ def format_summary(summary: MetricsSummary) -> str:
     2. ``non_empty_request_count``
     3. ``cold_start_request_count``
     4. ``total_blocks``
-    5. ``total_prefix_hit_blocks``
-    6. ``total_reusable_blocks``
-    7. ``overall_prefix_hit_rate``
-    8. ``overall_block_level_reusable_ratio``
+    5. ``total_content_prefix_reuse_blocks``
+    6. ``total_content_reused_blocks_anywhere``
+    7. ``content_prefix_reuse_rate``
+    8. ``content_block_reuse_ratio``
 
     The returned string does **not** end with a trailing newline.
     """
@@ -93,10 +93,10 @@ def format_summary(summary: MetricsSummary) -> str:
         _int_line("non_empty_request_count",           summary.non_empty_request_count),
         _int_line("cold_start_request_count",          summary.cold_start_request_count),
         _int_line("total_blocks",                      summary.total_blocks),
-        _int_line("total_prefix_hit_blocks",           summary.total_prefix_hit_blocks),
-        _int_line("total_reusable_blocks",             summary.total_reusable_blocks),
-        _pct_line("overall_prefix_hit_rate",           summary.overall_prefix_hit_rate),
-        _pct_line("overall_block_level_reusable_ratio", summary.overall_block_level_reusable_ratio),
+        _int_line("total_content_prefix_reuse_blocks",           summary.total_content_prefix_reuse_blocks),
+        _int_line("total_content_reused_blocks_anywhere",             summary.total_content_reused_blocks_anywhere),
+        _pct_line("content_prefix_reuse_rate",           summary.content_prefix_reuse_rate),
+        _pct_line("content_block_reuse_ratio", summary.content_block_reuse_ratio),
     ]
     return "\n".join(lines)
 

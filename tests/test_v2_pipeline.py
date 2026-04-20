@@ -208,8 +208,8 @@ def test_v2_v1_pipeline_first_request_cold_start() -> None:
     records = build_block_records_from_raw_requests(raw, block_builder=SimpleBlockBuilder(block_size=4))
     results = list(replay(records))
     # First request: always cold start
-    assert results[0].prefix_hit_blocks == 0
-    assert results[0].reusable_block_count == 0
+    assert results[0].content_prefix_reuse_blocks == 0
+    assert results[0].content_reused_blocks_anywhere == 0
 
 
 def test_v2_v1_pipeline_identical_requests_full_prefix_hit() -> None:
@@ -222,8 +222,8 @@ def test_v2_v1_pipeline_identical_requests_full_prefix_hit() -> None:
     records = build_block_records_from_raw_requests(raw, block_builder=SimpleBlockBuilder(block_size=4))
     results = list(replay(records))
     r2 = results[1]
-    assert r2.prefix_hit_blocks == r2.total_blocks  # full hit
-    assert r2.reusable_block_count == r2.total_blocks
+    assert r2.content_prefix_reuse_blocks == r2.total_blocks  # full hit
+    assert r2.content_reused_blocks_anywhere == r2.total_blocks
 
 
 def test_v2_v1_compute_metrics_produces_summary() -> None:
@@ -238,11 +238,11 @@ def test_v2_v1_compute_metrics_produces_summary() -> None:
     assert summary.request_count == 2
     assert summary.non_empty_request_count == 2
     assert summary.total_blocks > 0
-    assert 0.0 <= summary.overall_prefix_hit_rate <= 1.0
-    assert 0.0 <= summary.overall_block_level_reusable_ratio <= 1.0
+    assert 0.0 <= summary.content_prefix_reuse_rate <= 1.0
+    assert 0.0 <= summary.content_block_reuse_ratio <= 1.0
 
 
-def test_v2_v1_overall_prefix_hit_rate_positive_for_repeated_content() -> None:
+def test_v2_v1_content_prefix_reuse_rate_positive_for_repeated_content() -> None:
     """Repeating the same content should yield a non-zero hit rate."""
     content = "hello world " * 10  # long enough for multiple blocks
     raw = [
@@ -253,7 +253,7 @@ def test_v2_v1_overall_prefix_hit_rate_positive_for_repeated_content() -> None:
     records = build_block_records_from_raw_requests(raw, block_builder=SimpleBlockBuilder(block_size=4))
     results = list(replay(records))
     summary = compute_metrics(results)
-    assert summary.overall_prefix_hit_rate > 0.0
+    assert summary.content_prefix_reuse_rate > 0.0
 
 
 def test_v2_empty_messages_produces_empty_block_ids() -> None:

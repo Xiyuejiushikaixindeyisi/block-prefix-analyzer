@@ -14,7 +14,7 @@
 # This is the supplementary prefix-aware view for comparison with the reusable figure.
 # It is NOT the paper's primary definition; it is a parallel analysis.
 
-event_definition: prefix
+event_definition: content_prefix_reuse
 input_file: data/public/qwen_traceA_blksz_16.jsonl
 output_dir: outputs/paper_repro/f13_traceA_public_prefix
 trace_name: traceA_public

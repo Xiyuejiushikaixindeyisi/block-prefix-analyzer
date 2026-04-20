@@ -2,9 +2,9 @@
 
 Extends the V1 replay engine with three additional per-request measurements:
 
-token_level_prefix_hit_ratio
-    ``prefix_hit_tokens / total_tokens`` where ``prefix_hit_tokens =
-    prefix_hit_blocks * block_size``.  If all full blocks are hit, the
+content_prefix_reuse_token_ratio
+    ``content_prefix_reuse_tokens / total_tokens`` where ``content_prefix_reuse_tokens =
+    content_prefix_reuse_blocks * block_size``.  If all full blocks are hit, the
     partial last block (leftover) is also credited, since the request is a
     prefix of something already cached.  Requires ``RequestRecord.token_count``
     and ``RequestRecord.block_size`` to be set; ``None`` otherwise.
@@ -45,21 +45,21 @@ class EnrichedPerRequestResult:
         Copied from the source record.
     total_blocks:
         ``len(record.block_ids)``.
-    prefix_hit_blocks:
+    content_prefix_reuse_blocks:
         Contiguous prefix hit count (same definition as V1).
-    reusable_block_count:
+    content_reused_blocks_anywhere:
         Per-position reusability count (same definition as V1).
     total_tokens:
         ``record.token_count``; ``None`` if not set.
     leftover_tokens:
         Tokens in the final incomplete block: ``total_tokens % block_size``.
         ``None`` if ``total_tokens`` or ``block_size`` is unavailable.
-    prefix_hit_tokens:
+    content_prefix_reuse_tokens:
         Number of tokens attributed to the prefix hit.  Equals
-        ``prefix_hit_blocks * block_size``; adds ``leftover_tokens`` when all
+        ``content_prefix_reuse_blocks * block_size``; adds ``leftover_tokens`` when all
         full blocks were hit.  ``None`` if token-level fields are absent.
-    token_level_prefix_hit_ratio:
-        ``prefix_hit_tokens / total_tokens``.  ``None`` if fields are absent.
+    content_prefix_reuse_token_ratio:
+        ``content_prefix_reuse_tokens / total_tokens``.  ``None`` if fields are absent.
     mean_reuse_time:
         Mean reuse time in the same unit as ``timestamp``.  ``None`` if no
         blocks were reused in this request.
@@ -69,12 +69,12 @@ class EnrichedPerRequestResult:
     timestamp: int | float
     arrival_index: int
     total_blocks: int
-    prefix_hit_blocks: int
-    reusable_block_count: int
+    content_prefix_reuse_blocks: int
+    content_reused_blocks_anywhere: int
     total_tokens: int | None
     leftover_tokens: int | None
-    prefix_hit_tokens: int | None
-    token_level_prefix_hit_ratio: float | None
+    content_prefix_reuse_tokens: int | None
+    content_prefix_reuse_token_ratio: float | None
     mean_reuse_time: float | None
 
 
@@ -144,28 +144,28 @@ def enriched_replay(
         total_tokens = record.token_count
         block_size = record.block_size
         leftover_tokens: int | None = None
-        prefix_hit_tokens: int | None = None
+        content_prefix_reuse_tokens: int | None = None
         token_ratio: float | None = None
 
         if total_tokens is not None and block_size is not None and total_tokens > 0:
             leftover_tokens = total_tokens - len(record.block_ids) * block_size
-            prefix_hit_tokens = prefix_hit * block_size
+            content_prefix_reuse_tokens = prefix_hit * block_size
             if prefix_hit == len(record.block_ids):
                 # All full blocks hit: also credit the partial last block.
-                prefix_hit_tokens += leftover_tokens
-            token_ratio = prefix_hit_tokens / total_tokens
+                content_prefix_reuse_tokens += leftover_tokens
+            token_ratio = content_prefix_reuse_tokens / total_tokens
 
         yield EnrichedPerRequestResult(
             request_id=record.request_id,
             timestamp=record.timestamp,
             arrival_index=record.arrival_index,
             total_blocks=len(record.block_ids),
-            prefix_hit_blocks=prefix_hit,
-            reusable_block_count=reusable_count,
+            content_prefix_reuse_blocks=prefix_hit,
+            content_reused_blocks_anywhere=reusable_count,
             total_tokens=total_tokens,
             leftover_tokens=leftover_tokens,
-            prefix_hit_tokens=prefix_hit_tokens,
-            token_level_prefix_hit_ratio=token_ratio,
+            content_prefix_reuse_tokens=content_prefix_reuse_tokens,
+            content_prefix_reuse_token_ratio=token_ratio,
             mean_reuse_time=sum(reuse_times) / len(reuse_times) if reuse_times else None,
         )
 

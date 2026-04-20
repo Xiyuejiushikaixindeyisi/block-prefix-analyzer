@@ -1,6 +1,6 @@
 # F4 supplementary prefix-aware view
 # Figure: F4_traceA_public_prefix (supplementary, NOT paper main definition)
-# Hit definition: prefix_hit_blocks
+# Hit definition: content_prefix_reuse_blocks
 #   Only blocks in a contiguous prefix from request start are counted as hit.
 #   First miss terminates the prefix. This is stricter than the paper's definition.
 # Role: parallel comparison against f4_traceA_public_reusable; do NOT present as
@@ -8,7 +8,7 @@
 
 trace_name: traceA
 input_file: data/public/qwen_traceA_blksz_16.jsonl
-hit_metric: prefix
+hit_metric: content_prefix_reuse
 bin_size_seconds: 60
 output_dir: outputs/paper_repro/f4_traceA_public_prefix
 figure_variant: supplementary_prefix_aware_view

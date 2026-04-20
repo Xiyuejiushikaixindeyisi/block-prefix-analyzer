@@ -135,7 +135,7 @@ class TestFutureReuseDetection:
         fwd = compute_forward_inset([r1, r2])
         by_id = {r.request_id: r for r in fwd}
         assert by_id["1"].is_reusable_by_future_root is True
-        assert by_id["1"].reused_block_count == 1  # only block 10 is shared
+        assert by_id["1"].content_reused_block_count == 1  # only block 10 is shared
 
     def test_future_followup_does_not_count(self):
         """A follow-up request reusing r1's block does NOT make r1 forward-reusable."""
@@ -278,7 +278,7 @@ class TestNumFutureReusers:
         fwd = compute_forward_inset([r1, r2])
         by_id = {r.request_id: r for r in fwd}
         assert by_id["1"].num_future_reusers == 1   # r2 counted once
-        assert by_id["1"].reused_block_count == 2   # both blocks are reused
+        assert by_id["1"].content_reused_block_count == 2   # both blocks are reused
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +321,7 @@ class TestCsvSchema:
         "request_id", "timestamp", "request_type", "display_label",
         "is_root_request", "is_reusable_by_future_root",
         "first_reused_by_request_id", "first_future_reuse_delay_seconds",
-        "num_future_reusers", "reused_block_count", "reused_block_approx_tokens",
+        "num_future_reusers", "content_reused_block_count", "content_reused_block_approx_tokens",
     ]
 
     def test_csv_header_columns(self, tmp_path):

@@ -32,13 +32,29 @@
 - 请求排序必须显式按 `(timestamp, arrival_index)` 稳定升序。
 
 ## 5. 指标定义约定（V1 冻结）
+
+### 5a. 三个概念严格区分（禁止混用）
+
+| 概念 | 代码字段名 | 定义 | 能否等同于 vLLM prefix hit？ |
+|---|---|---|---|
+| **content_block_reuse_event** | `content_reused_blocks_anywhere` | 任意位置的 block 只要在严格过去的历史池出现过即为 reuse event，不要求位于连续前缀段内 | **否**——block_hash_id 是 content-only hash，非 vLLM parent-aware chained hash |
+| **content_prefix_reuse_blocks** | `content_prefix_reuse_blocks` | 从请求开头开始连续命中的 block 数，第一次 miss 后停止计数 | **否**——仅反映 content-block 层面的 prefix-like reuse，不等价于 vLLM 真实 prefix cache hit |
+| **true_vllm_prefix_hit** | _(当前公开数据无法直接得到)_ | vLLM 真实 parent-aware chained hash 语义下的 prefix cache hit，依赖 `hash[i]=H(parent[i-1], tokens[i], extra_keys)` | 是——但当前公开 TraceA 数据集不提供此信息 |
+
+**核心原因**：TraceA 公开数据集的 `block_hash_id` 是 content-only hash（parent diversity 检验：同一 block_id 作为末位 block 时对应 2000+ 种不同 parent block，证伪链式 hash 假设）。因此：
+- `content_reused_blocks_anywhere` ≠ vLLM prefix cache hit
+- `content_prefix_reuse_blocks` ≠ vLLM prefix cache hit
+- 要计算 `true_vllm_prefix_hit` 需要原始 token 序列来重建链式 hash
+
+**禁止**：不得在代码、注释、文档、图表中把当前公开数据集上的任何统计字段直接称为 `vllm_prefix_hit`、`prefix cache hit` 或 `vLLM prefix cache hit`。
+
+### 5b. 其余指标
 | 指标 | 定义 |
 |---|---|
-| block-level reusable ratio | 如果某 block hash 在 **任何更早请求中** 出现过，则视为可复用。最宽口径。 |
-| prefix-aware ideal hit ratio | 只有 **从请求起点开始、连续命中** 的 block 才计入；第一次 miss 之后的所有 block 都不再算命中。主要指标。 |
-| token-level prefix hit ratio | 把可复用前缀的 block 数换算回 token 数；需要明确最后一个 partial block 的处理策略。 |
-| reuse time | 被后续请求复用时 `current_time - last_seen_time`（V1 默认 `last_seen`）。 |
-| block lifespan | 从首次出现到最终被复用 / 最终出现的时间跨度，V1 可延后。 |
+| `content_block_reuse_ratio` | `Σ content_reused_blocks_anywhere / Σ total_blocks`，最宽口径 |
+| `content_prefix_reuse_rate` | `Σ content_prefix_reuse_blocks / Σ total_blocks`，从起点连续命中 |
+| `content_prefix_reuse_token_ratio` | `content_prefix_reuse_tokens / total_tokens`，token 粒度 |
+| reuse time | `current_time - last_seen_time`（V1 默认 `last_seen`） |
 
 聚合口径同时输出 **micro**（`Σ hit / Σ total`）与 **macro**（均值）两种，避免口径误解。
 

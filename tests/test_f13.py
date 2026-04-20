@@ -94,9 +94,9 @@ def _make_scenario_a():
 
 def test_reusable_events_include_non_prefix_blocks():
     records = _make_scenario_a()
-    series = _compute(records, "reusable")
+    series = _compute(records, "content_block_reuse")
     # Expect 3 reuse events: blocks 1, 4, 2 (all seen before r_st, including non-prefix block 4 and 2)
-    assert series.reuse_event_count_total == 3
+    assert series.content_block_reuse_event_count_total == 3
     event_times = sorted(e.reuse_time_seconds for e in series.events)
     # block 1 → 10-0=10, block 4 → 10-5=5, block 2 → 10-0=10
     assert sorted(event_times) == sorted([10.0, 5.0, 10.0])
@@ -104,7 +104,7 @@ def test_reusable_events_include_non_prefix_blocks():
 
 def test_reusable_events_contain_non_prefix_block_4():
     records = _make_scenario_a()
-    series = _compute(records, "reusable")
+    series = _compute(records, "content_block_reuse")
     # Block 4 is in r_st at position 1 (after prefix miss) but should appear in reusable events
     reuse_times = sorted(e.reuse_time_seconds for e in series.events)
     assert 5.0 in reuse_times  # block 4: reuse_time = 10-5 = 5
@@ -116,15 +116,15 @@ def test_reusable_events_contain_non_prefix_block_4():
 
 def test_prefix_events_only_from_prefix_segment():
     records = _make_scenario_a()
-    series = _compute(records, "prefix")
+    series = _compute(records, "content_prefix_reuse")
     # prefix_hit=1 for r_st=[1,4,2] → only block 1 is in segment → 1 event
-    assert series.reuse_event_count_total == 1
+    assert series.content_block_reuse_event_count_total == 1
     assert series.events[0].reuse_time_seconds == 10.0  # block 1: 10-0=10
 
 
 def test_prefix_events_exclude_non_prefix_blocks():
     records = _make_scenario_a()
-    series = _compute(records, "prefix")
+    series = _compute(records, "content_prefix_reuse")
     # Block 4 (position 1) and block 2 (position 2) are NOT in prefix segment
     for e in series.events:
         assert e.reuse_time_seconds != 5.0, "Block 4 (reuse_time=5) must NOT appear in prefix events"
@@ -136,8 +136,8 @@ def test_prefix_events_exclude_non_prefix_blocks():
 
 def test_single_turn_filter_same_for_both_definitions():
     records = _make_scenario_a()
-    series_r = _compute(records, "reusable")
-    series_p = _compute(records, "prefix")
+    series_r = _compute(records, "content_block_reuse")
+    series_p = _compute(records, "content_prefix_reuse")
     # Both should see the same single-turn request count
     assert series_r.single_turn_request_count == series_p.single_turn_request_count
     # In scenario A, only r_st (id="30") is single-turn
@@ -146,7 +146,7 @@ def test_single_turn_filter_same_for_both_definitions():
 
 def test_multi_turn_requests_excluded_from_events():
     records = _make_scenario_a()
-    series = _compute(records, "reusable")
+    series = _compute(records, "content_block_reuse")
     # r_root ("10") has child "20" → not single-turn → must not generate events as current request
     # r_child ("20") has parent → not single-turn
     # r_st ("30") is the only single-turn request
@@ -165,7 +165,7 @@ def test_reuse_time_uses_last_seen_not_first_seen():
     r_child = _rec("2", 5.0, [99], parent_chat_id=1,   arrival_index=1)
     r_st    = _rec("3", 10.0, [99], parent_chat_id=-1, arrival_index=2)
 
-    series_r = _compute([r_root, r_child, r_st], "reusable")
+    series_r = _compute([r_root, r_child, r_st], "content_block_reuse")
     assert len(series_r.events) == 1
     assert series_r.events[0].reuse_time_seconds == 5.0, (
         f"Expected 5.0 (last_seen=5), got {series_r.events[0].reuse_time_seconds}"
@@ -177,7 +177,7 @@ def test_prefix_reuse_time_also_uses_last_seen():
     r_child = _rec("2", 3.0, [7],  parent_chat_id=1,   arrival_index=1)
     r_st    = _rec("3", 9.0, [7],  parent_chat_id=-1, arrival_index=2)
 
-    series_p = _compute([r_root, r_child, r_st], "prefix")
+    series_p = _compute([r_root, r_child, r_st], "content_prefix_reuse")
     assert len(series_p.events) == 1
     assert series_p.events[0].reuse_time_seconds == 6.0  # 9-3=6
 
@@ -192,9 +192,9 @@ def test_reusable_deduplication_within_request():
     r_seed2 = _rec("2", 0.0,  [],  parent_chat_id=1,   arrival_index=1)   # child → r_seed not single-turn
     r_st    = _rec("3", 10.0, [1, 1, 2], parent_chat_id=-1, arrival_index=2)
 
-    series = _compute([r_seed, r_seed2, r_st], "reusable")
+    series = _compute([r_seed, r_seed2, r_st], "content_block_reuse")
     # block 1 seen twice in r_st → deduped to 1 event; block 2 is new → 0 events
-    assert series.reuse_event_count_total == 1
+    assert series.content_block_reuse_event_count_total == 1
     assert series.events[0].reuse_time_seconds == 10.0
 
 
@@ -206,9 +206,9 @@ def test_prefix_deduplication_within_prefix_segment():
     r_child = _rec("2", 0.0, [],     parent_chat_id=1,   arrival_index=1)
     r_st    = _rec("3", 5.0, [1, 1], parent_chat_id=-1, arrival_index=2)
 
-    series = _compute([r_seed, r_child, r_st], "prefix")
+    series = _compute([r_seed, r_child, r_st], "content_prefix_reuse")
     # Prefix segment = [1, 1] → unique = {1} → 1 event
-    assert series.reuse_event_count_total == 1
+    assert series.content_block_reuse_event_count_total == 1
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +222,9 @@ def test_cdf_includes_events_over_x_axis_limit():
     r_child = _rec("2", 0.0,    [],   parent_chat_id=1,   arrival_index=1)
     r_st    = _rec("3", 4000.0, [42], parent_chat_id=-1, arrival_index=2)
 
-    series = _compute([r_seed, r_child, r_st], "reusable", x_max=56.0)
-    assert series.reuse_event_count_total == 1
-    assert series.reuse_event_count_over_56min == 1
+    series = _compute([r_seed, r_child, r_st], "content_block_reuse", x_max=56.0)
+    assert series.content_block_reuse_event_count_total == 1
+    assert series.content_block_reuse_event_count_over_56min == 1
     # CDF of the single event should reach 1.0 (computed over all events)
     assert len(series.cdf_rows) == 1
     assert series.cdf_rows[0].cdf == 1.0
@@ -238,10 +238,10 @@ def test_cdf_not_renormalized_after_clipping():
     r_st    = _rec("3", 10.0, [10, 20], parent_chat_id=-1, arrival_index=2)   # within 56 min
     r_st2   = _rec("4", 5000.0, [10],   parent_chat_id=-1, arrival_index=3)  # beyond 56 min
 
-    series = _compute([r_seed, r_child, r_st, r_st2], "reusable", x_max=56.0)
+    series = _compute([r_seed, r_child, r_st, r_st2], "content_block_reuse", x_max=56.0)
     # r_st: blocks 10 and 20 both reused (2 events); r_st2: block 10 reused (1 event)
-    assert series.reuse_event_count_total == 3
-    assert series.reuse_event_count_over_56min == 1
+    assert series.content_block_reuse_event_count_total == 3
+    assert series.content_block_reuse_event_count_over_56min == 1
     max_cdf = max(r.cdf for r in series.cdf_rows)
     assert max_cdf == 1.0, "CDF must reach 1.0 (not re-normalized)"
 
@@ -253,10 +253,10 @@ def test_cdf_not_renormalized_after_clipping():
 def test_reusable_and_prefix_cdfs_differ():
     """Same records → different event counts → different CDFs."""
     records = _make_scenario_a()
-    series_r = _compute(records, "reusable")
-    series_p = _compute(records, "prefix")
+    series_r = _compute(records, "content_block_reuse")
+    series_p = _compute(records, "content_prefix_reuse")
     # reusable: 3 events; prefix: 1 event → different CDFs
-    assert series_r.reuse_event_count_total != series_p.reuse_event_count_total
+    assert series_r.content_block_reuse_event_count_total != series_p.content_block_reuse_event_count_total
     r_cdf_pts = [(row.reuse_time_seconds, row.cdf) for row in series_r.cdf_rows]
     p_cdf_pts = [(row.reuse_time_seconds, row.cdf) for row in series_p.cdf_rows]
     assert r_cdf_pts != p_cdf_pts
@@ -287,14 +287,14 @@ def _make_scenario_b():
 
 def test_reusable_inset_shows_request_with_reuse():
     records = _make_scenario_b()
-    series = _compute(records, "reusable")
+    series = _compute(records, "content_block_reuse")
     assert series.request_count_with_reuse == 1
     assert series.request_count_without_reuse == 0
 
 
 def test_prefix_inset_shows_no_request_with_reuse():
     records = _make_scenario_b()
-    series = _compute(records, "prefix")
+    series = _compute(records, "content_prefix_reuse")
     # prefix_hit=0 → no prefix events → no request counted in inset
     assert series.request_count_with_reuse == 0
     assert series.request_count_without_reuse == 1
@@ -302,8 +302,8 @@ def test_prefix_inset_shows_no_request_with_reuse():
 
 def test_reusable_and_prefix_breakdown_differ():
     records = _make_scenario_b()
-    series_r = _compute(records, "reusable")
-    series_p = _compute(records, "prefix")
+    series_r = _compute(records, "content_block_reuse")
+    series_p = _compute(records, "content_prefix_reuse")
     r_counts = [row.count for row in series_r.breakdown_rows]
     p_counts = [row.count for row in series_p.breakdown_rows]
     assert r_counts != p_counts or series_r.request_count_with_reuse != series_p.request_count_with_reuse
@@ -318,9 +318,9 @@ def test_image_type_mapped_to_multimedia():
     r_child = _rec("2", 0.0,  [],  req_type="text",  parent_chat_id=1,   arrival_index=1)
     r_img   = _rec("3", 5.0,  [5], req_type="image", parent_chat_id=-1, arrival_index=2)
 
-    series = _compute([r_seed, r_child, r_img], "reusable")
+    series = _compute([r_seed, r_child, r_img], "content_block_reuse")
     # r_img is single-turn and has 1 reuse event
-    assert series.reuse_event_count_total == 1
+    assert series.content_block_reuse_event_count_total == 1
     event = series.events[0]
     assert event.request_type == "image"
     assert event.display_label == "Multimedia"
@@ -331,7 +331,7 @@ def test_image_type_in_breakdown_has_multimedia_label():
     r_child = _rec("2", 0.0, [],  req_type="text",  parent_chat_id=1,   arrival_index=1)
     r_img   = _rec("3", 5.0, [5], req_type="image", parent_chat_id=-1, arrival_index=2)
 
-    series = _compute([r_seed, r_child, r_img], "reusable")
+    series = _compute([r_seed, r_child, r_img], "content_block_reuse")
     labels = [row.display_label for row in series.breakdown_rows]
     assert "Multimedia" in labels
 
@@ -346,7 +346,7 @@ def test_default_type_label_mapping_has_multimedia():
 
 def test_cdf_row_has_required_fields():
     records = _make_scenario_a()
-    series = _compute(records, "reusable")
+    series = _compute(records, "content_block_reuse")
     assert len(series.cdf_rows) > 0
     row = series.cdf_rows[0]
     assert hasattr(row, "request_type")
@@ -358,7 +358,7 @@ def test_cdf_row_has_required_fields():
 
 def test_breakdown_row_has_required_fields():
     records = _make_scenario_a()
-    series = _compute(records, "reusable")
+    series = _compute(records, "content_block_reuse")
     assert len(series.breakdown_rows) > 0
     row = series.breakdown_rows[0]
     assert hasattr(row, "request_type")
@@ -369,19 +369,19 @@ def test_breakdown_row_has_required_fields():
 
 def test_f13_series_has_required_fields():
     records = _make_scenario_a()
-    series = _compute(records, "reusable")
+    series = _compute(records, "content_block_reuse")
     assert hasattr(series, "event_definition")
     assert hasattr(series, "single_turn_request_count")
     assert hasattr(series, "request_count_with_reuse")
     assert hasattr(series, "request_count_without_reuse")
-    assert hasattr(series, "reuse_event_count_total")
-    assert hasattr(series, "reuse_event_count_over_56min")
+    assert hasattr(series, "content_block_reuse_event_count_total")
+    assert hasattr(series, "content_block_reuse_event_count_over_56min")
     assert hasattr(series, "x_axis_max_minutes")
 
 
 def test_reuse_time_minutes_matches_seconds(tmp_path):
     records = _make_scenario_a()
-    series = _compute(records, "reusable")
+    series = _compute(records, "content_block_reuse")
     for e in series.events:
         assert abs(e.reuse_time_minutes - e.reuse_time_seconds / 60.0) < 1e-9
     for r in series.cdf_rows:
@@ -390,26 +390,26 @@ def test_reuse_time_minutes_matches_seconds(tmp_path):
 
 def test_cdf_row_cdf_values_in_0_1():
     records = _make_scenario_a()
-    series = _compute(records, "reusable")
+    series = _compute(records, "content_block_reuse")
     for row in series.cdf_rows:
         assert 0.0 < row.cdf <= 1.0
 
 
 def test_breakdown_fraction_sum_le_one():
     records = _make_scenario_a()
-    series = _compute(records, "reusable")
+    series = _compute(records, "content_block_reuse")
     total = sum(row.fraction for row in series.breakdown_rows)
     assert total <= 1.0 + 1e-9
 
 
 def test_event_definition_recorded_in_series():
     records = _make_scenario_a()
-    assert _compute(records, "reusable").event_definition == "reusable"
-    assert _compute(records, "prefix").event_definition == "prefix"
+    assert _compute(records, "content_block_reuse").event_definition == "content_block_reuse"
+    assert _compute(records, "content_prefix_reuse").event_definition == "content_prefix_reuse"
 
 
 def test_save_cdf_csv_creates_file(tmp_path):
-    series = _compute(_make_scenario_a(), "reusable")
+    series = _compute(_make_scenario_a(), "content_block_reuse")
     p = tmp_path / "cdf.csv"
     save_cdf_csv(series, p)
     lines = p.read_text().splitlines()
@@ -418,25 +418,25 @@ def test_save_cdf_csv_creates_file(tmp_path):
 
 
 def test_save_breakdown_csv_reusable_columns(tmp_path):
-    series = _compute(_make_scenario_a(), "reusable")
+    series = _compute(_make_scenario_a(), "content_block_reuse")
     p = tmp_path / "breakdown_r.csv"
     save_breakdown_csv(series, p)
     header = p.read_text().splitlines()[0]
-    assert "reusable_request_count" in header
-    assert "reusable_request_fraction_over_all_single_turn_requests" in header
+    assert "content_reused_request_count" in header
+    assert "content_reused_request_fraction_over_all_single_turn_requests" in header
 
 
 def test_save_breakdown_csv_prefix_columns(tmp_path):
-    series = _compute(_make_scenario_a(), "prefix")
+    series = _compute(_make_scenario_a(), "content_prefix_reuse")
     p = tmp_path / "breakdown_p.csv"
     save_breakdown_csv(series, p)
     header = p.read_text().splitlines()[0]
-    assert "prefix_reusable_request_count" in header
-    assert "prefix_reusable_request_fraction_over_all_single_turn_requests" in header
+    assert "content_prefix_reused_request_count" in header
+    assert "content_prefix_reused_request_fraction_over_all_single_turn_requests" in header
 
 
 def test_save_metadata_json_required_keys(tmp_path):
-    series = _compute(_make_scenario_a(), "reusable")
+    series = _compute(_make_scenario_a(), "content_block_reuse")
     p = tmp_path / "metadata.json"
     save_metadata_json(series, p, trace_name="test", input_file="test.jsonl")
     import json
@@ -445,8 +445,8 @@ def test_save_metadata_json_required_keys(tmp_path):
         "trace_name", "input_file", "event_definition", "single_turn_definition",
         "reuse_time_definition", "dedupe_within_request_rule", "type_label_mapping",
         "x_axis_max_minutes", "single_turn_request_count", "request_count_with_reuse",
-        "request_count_without_reuse", "reuse_event_count_total",
-        "reuse_event_count_over_56min", "note_public_adaptation",
+        "request_count_without_reuse", "content_block_reuse_event_count_total",
+        "content_block_reuse_event_count_over_56min", "note_public_adaptation",
     ]
     for key in required_keys:
         assert key in meta, f"metadata.json missing required key: {key!r}"
@@ -481,7 +481,7 @@ def test_compute_f13_accepts_plain_request_records():
         RequestRecord("1", 0.0, 0, [1, 2], metadata={"type": "text", "parent_chat_id": -1}),
         RequestRecord("2", 1.0, 1, [3, 4], metadata={"type": "text", "parent_chat_id": -1}),
     ]
-    series = compute_f13_series(records, event_definition="reusable")
+    series = compute_f13_series(records, event_definition="content_block_reuse")
     assert isinstance(series, F13Series)
 
 
@@ -490,9 +490,9 @@ def test_compute_f13_accepts_plain_request_records():
 # ---------------------------------------------------------------------------
 
 def test_empty_records_returns_zero_counts():
-    series = _compute([], "reusable")
+    series = _compute([], "content_block_reuse")
     assert series.single_turn_request_count == 0
-    assert series.reuse_event_count_total == 0
+    assert series.content_block_reuse_event_count_total == 0
     assert series.cdf_rows == []
     assert series.breakdown_rows == []
 
@@ -501,15 +501,15 @@ def test_all_multi_turn_no_single_turn_events():
     """All requests belong to multi-turn sessions → no reuse events extracted."""
     r_root  = _rec("1", 0.0,  [1, 2], parent_chat_id=-1, arrival_index=0)
     r_child = _rec("2", 5.0,  [1, 3], parent_chat_id=1,   arrival_index=1)
-    series = _compute([r_root, r_child], "reusable")
+    series = _compute([r_root, r_child], "content_block_reuse")
     assert series.single_turn_request_count == 0
-    assert series.reuse_event_count_total == 0
+    assert series.content_block_reuse_event_count_total == 0
 
 
 def test_cold_start_single_turn_no_events():
     """Single-turn request is the very first request → nothing seen before → 0 events."""
     r_st = _rec("1", 0.0, [5, 6, 7], parent_chat_id=-1, arrival_index=0)
-    series = _compute([r_st], "reusable")
+    series = _compute([r_st], "content_block_reuse")
     assert series.single_turn_request_count == 1
-    assert series.reuse_event_count_total == 0
+    assert series.content_block_reuse_event_count_total == 0
     assert series.request_count_without_reuse == 1

@@ -147,7 +147,7 @@ def test_empty_block_ids_record_participates_in_sort() -> None:
 def test_first_record_after_sort_is_lowest_key() -> None:
     # After sorting, index-0 is the record with the smallest
     # (timestamp, arrival_index).  The replay engine will produce
-    # prefix_hit_blocks == 0 for it (first request, no prior state).
+    # content_prefix_reuse_blocks == 0 for it (first request, no prior state).
     # This test pins the sort identity so replay tests can rely on it.
     a = _make("a", 5.0, 0)
     b = _make("b", 1.0, 10)   # lower timestamp → first
@@ -157,7 +157,7 @@ def test_first_record_after_sort_is_lowest_key() -> None:
     first = result[0]
     assert first.request_id == "c"
     # Downstream invariant (documented here, enforced in test_replay.py):
-    # the replay engine must assign prefix_hit_blocks == 0 to this record.
+    # the replay engine must assign content_prefix_reuse_blocks == 0 to this record.
     assert ordering_key(first) == min(ordering_key(r) for r in [a, b, c])
 
 

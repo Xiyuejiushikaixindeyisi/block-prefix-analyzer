@@ -5,32 +5,32 @@
       "timestamp": 100,
       "arrival_index": 0,
       "total_blocks": 3,
-      "prefix_hit_blocks": 0,
-      "reusable_block_count": 0
+      "content_prefix_reuse_blocks": 0,
+      "content_reused_blocks_anywhere": 0
     },
     {
       "request_id": "user-a",
       "timestamp": 200,
       "arrival_index": 1,
       "total_blocks": 3,
-      "prefix_hit_blocks": 2,
-      "reusable_block_count": 2
+      "content_prefix_reuse_blocks": 2,
+      "content_reused_blocks_anywhere": 2
     },
     {
       "request_id": "user-b",
       "timestamp": 300,
       "arrival_index": 2,
       "total_blocks": 3,
-      "prefix_hit_blocks": 2,
-      "reusable_block_count": 2
+      "content_prefix_reuse_blocks": 2,
+      "content_reused_blocks_anywhere": 2
     },
     {
       "request_id": "combo",
       "timestamp": 400,
       "arrival_index": 3,
       "total_blocks": 4,
-      "prefix_hit_blocks": 3,
-      "reusable_block_count": 3
+      "content_prefix_reuse_blocks": 3,
+      "content_reused_blocks_anywhere": 3
     }
   ],
   "metrics": {
@@ -38,9 +38,9 @@
     "non_empty_request_count": 4,
     "cold_start_request_count": 1,
     "total_blocks": 13,
-    "total_prefix_hit_blocks": 7,
-    "total_reusable_blocks": 7,
-    "overall_prefix_hit_rate": 0.5384615384615384,
-    "overall_block_level_reusable_ratio": 0.5384615384615384
+    "total_content_prefix_reuse_blocks": 7,
+    "total_content_reused_blocks_anywhere": 7,
+    "content_prefix_reuse_rate": 0.5384615384615384,
+    "content_block_reuse_ratio": 0.5384615384615384
   }
 }

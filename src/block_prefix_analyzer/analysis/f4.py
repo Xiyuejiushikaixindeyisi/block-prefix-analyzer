@@ -1,8 +1,8 @@
 """F4 figure analysis: time-binned block reuse statistics.
 
 Two hit metrics are supported:
-  "reusable"  → reusable_block_count  (any position whose block appeared in any earlier request)
-  "prefix"    → prefix_hit_blocks     (only contiguous prefix from request start)
+  "content_block_reuse"  → content_reused_blocks_anywhere  (any position whose block appeared in any earlier request)
+  "content_prefix_reuse"    → content_prefix_reuse_blocks     (only contiguous prefix from request start)
 
 The public interface is:
   compute_f4_series(results, hit_metric, bin_size_seconds) -> F4Series
@@ -19,11 +19,11 @@ from typing import Literal
 
 from block_prefix_analyzer.replay import PerRequestResult
 
-HitMetric = Literal["reusable", "prefix"]
+HitMetric = Literal["content_block_reuse", "content_prefix_reuse"]
 
 _HIT_FIELD: dict[HitMetric, str] = {
-    "reusable": "reusable_block_count",
-    "prefix": "prefix_hit_blocks",
+    "content_block_reuse": "content_reused_blocks_anywhere",
+    "content_prefix_reuse": "content_prefix_reuse_blocks",
 }
 
 

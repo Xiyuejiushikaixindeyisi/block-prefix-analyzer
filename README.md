@@ -27,7 +27,7 @@
 ### V1 — 全部完成
 
 - 时间序回放引擎（`replay.py`）：query → yield → insert，无 self-hit
-- 两种 hit 口径：`prefix_hit_blocks`（前缀连续命中）+ `reusable_block_count`（任意位置）
+- 两种 hit 口径：`content_prefix_reuse_blocks`（前缀连续命中）+ `content_reused_blocks_anywhere`（任意位置）
 - `MetricsSummary` 聚合与报表输出
 - TraceA 数据加载（`io/traceA_loader.py`）
 - F4 双图复现（reusable + prefix-aware），已在 TraceA 上跑通
@@ -130,10 +130,10 @@ pytest
 | 规范术语 | 含义 | V1 实现状态 |
 |---|---|---|
 | **reuse event（复用事件）** | 某个 block hash 在更晚到达的请求中再次出现 | 由 `seen_blocks` 集合隐式追踪；不单独输出事件列表 |
-| **可复用 block（reusable block）** | 该 block hash 在**任意更早请求**中出现过（最宽口径） | `PerRequestResult.reusable_block_count` |
-| **前缀命中 block（prefix-hit block）** | 从请求 `block_ids[0]` 开始**连续**命中 Trie 的 block（第一次 miss 后截断） | `PerRequestResult.prefix_hit_blocks` |
+| **可复用 block（reusable block）** | 该 block hash 在**任意更早请求**中出现过（最宽口径） | `PerRequestResult.content_reused_blocks_anywhere` |
+| **前缀命中 block（prefix-hit block）** | 从请求 `block_ids[0]` 开始**连续**命中 Trie 的 block（第一次 miss 后截断） | `PerRequestResult.content_prefix_reuse_blocks` |
 
-> 两种口径的区别：`reusable_block_count ≥ prefix_hit_blocks`，见 `with_empty` fixture 中 `user` 请求的示例（前缀未命中但有 2 个可复用 block）。
+> 两种口径的区别：`content_reused_blocks_anywhere ≥ content_prefix_reuse_blocks`，见 `with_empty` fixture 中 `user` 请求的示例（前缀未命中但有 2 个可复用 block）。
 
 ---
 
@@ -141,10 +141,10 @@ pytest
 
 | 规范术语 | 定义 | 代码字段名 | 口径 |
 |---|---|---|---|
-| **overall_block_reusable_ratio** | `Σ reusable_block_count / Σ total_blocks`（分母仅含非空请求） | `overall_block_level_reusable_ratio` | micro |
-| **overall_prefix_hit_rate** | `Σ prefix_hit_blocks / Σ total_blocks`（分母仅含非空请求） | `overall_prefix_hit_rate` | micro |
+| **overall_block_reusable_ratio** | `Σ content_reused_blocks_anywhere / Σ total_blocks`（分母仅含非空请求） | `content_block_reuse_ratio` | micro |
+| **content_prefix_reuse_rate** | `Σ content_prefix_reuse_blocks / Σ total_blocks`（分母仅含非空请求） | `content_prefix_reuse_rate` | micro |
 
-> **注意**：规范术语 `overall_block_reusable_ratio` 在代码中对应字段名为 `overall_block_level_reusable_ratio`（多一个 `_level_`），含义相同。V2 重构时可统一命名。
+> **注意**：规范术语 `overall_block_reusable_ratio` 在代码中对应字段名为 `content_block_reuse_ratio`（多一个 `_level_`），含义相同。V2 重构时可统一命名。
 
 ---
 
@@ -370,8 +370,8 @@ outputs/paper_repro/f4_traceA_public/
 
 | 场景 | 使用指标 | 代码字段名 |
 |---|---|---|
-| F4 论文复现主指标 | `overall_block_reusable_ratio` | `overall_block_level_reusable_ratio`（`_level_` 为历史命名，含义相同） |
-| 项目扩展指标 | `overall_prefix_hit_rate` | `overall_prefix_hit_rate` |
+| F4 论文复现主指标 | `overall_block_reusable_ratio` | `content_block_reuse_ratio`（`_level_` 为历史命名，含义相同） |
+| 项目扩展指标 | `content_prefix_reuse_rate` | `content_prefix_reuse_rate` |
 | 项目扩展指标 | `reuse_time_last_seen` | V2+ 实现 |
 | 项目扩展指标 | `reuse_time_first_seen` | V2+ 实现 |
 

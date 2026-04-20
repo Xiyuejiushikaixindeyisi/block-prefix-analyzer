@@ -1,7 +1,7 @@
 """Tests for V2 enriched replay and block lifespan metrics.
 
 Coverage:
-  A. token_level_prefix_hit_ratio — partial block handling
+  A. content_prefix_reuse_token_ratio — partial block handling
   B. mean_reuse_time — last_seen semantics, intra-request duplicate rule
   C. lifespan — compute_block_lifespans, never-reused = 0
   D. EnrichedPerRequestResult schema — field types and None defaults
@@ -62,8 +62,8 @@ def test_enriched_result_base_fields_present() -> None:
     assert result.request_id == "r1"
     assert result.timestamp == 1.5
     assert result.total_blocks == 2
-    assert result.prefix_hit_blocks == 0  # cold start
-    assert result.reusable_block_count == 0
+    assert result.content_prefix_reuse_blocks == 0  # cold start
+    assert result.content_reused_blocks_anywhere == 0
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ def test_enriched_result_base_fields_present() -> None:
 def test_cold_start_prefix_hit_zero() -> None:
     r = _rec("r1", 0.0, [1, 2, 3], token_count=3, block_size=1)
     result = _replay_list([r])[0]
-    assert result.prefix_hit_blocks == 0
+    assert result.content_prefix_reuse_blocks == 0
 
 
 def test_cold_start_reuse_time_none() -> None:
@@ -85,7 +85,7 @@ def test_cold_start_reuse_time_none() -> None:
 def test_cold_start_token_ratio_zero() -> None:
     r = _rec("r1", 0.0, [1, 2, 3], token_count=3, block_size=1)
     result = _replay_list([r])[0]
-    assert result.token_level_prefix_hit_ratio == 0.0
+    assert result.content_prefix_reuse_token_ratio == 0.0
 
 
 def test_token_fields_none_without_token_count() -> None:
@@ -93,12 +93,12 @@ def test_token_fields_none_without_token_count() -> None:
     result = _replay_list([r])[0]
     assert result.total_tokens is None
     assert result.leftover_tokens is None
-    assert result.prefix_hit_tokens is None
-    assert result.token_level_prefix_hit_ratio is None
+    assert result.content_prefix_reuse_tokens is None
+    assert result.content_prefix_reuse_token_ratio is None
 
 
 # ---------------------------------------------------------------------------
-# A. token_level_prefix_hit_ratio
+# A. content_prefix_reuse_token_ratio
 # ---------------------------------------------------------------------------
 
 def test_full_prefix_hit_ratio_one() -> None:
@@ -107,7 +107,7 @@ def test_full_prefix_hit_ratio_one() -> None:
     r1 = _rec("r1", 0.0, block_ids, token_count=3, block_size=1, arrival_index=0)
     r2 = _rec("r2", 1.0, block_ids, token_count=3, block_size=1, arrival_index=1)
     results = _replay_list([r1, r2])
-    assert results[1].token_level_prefix_hit_ratio == 1.0
+    assert results[1].content_prefix_reuse_token_ratio == 1.0
 
 
 def test_partial_prefix_hit_ratio() -> None:
@@ -115,14 +115,14 @@ def test_partial_prefix_hit_ratio() -> None:
     r1 = _rec("r1", 0.0, [1, 2], token_count=2, block_size=1, arrival_index=0)
     r2 = _rec("r2", 1.0, [1, 2, 3], token_count=3, block_size=1, arrival_index=1)
     results = _replay_list([r1, r2])
-    assert abs(results[1].token_level_prefix_hit_ratio - 2 / 3) < 1e-9
+    assert abs(results[1].content_prefix_reuse_token_ratio - 2 / 3) < 1e-9
 
 
 def test_no_prefix_hit_ratio_zero() -> None:
     r1 = _rec("r1", 0.0, [1], token_count=1, block_size=1, arrival_index=0)
     r2 = _rec("r2", 1.0, [9], token_count=1, block_size=1, arrival_index=1)
     results = _replay_list([r1, r2])
-    assert results[1].token_level_prefix_hit_ratio == 0.0
+    assert results[1].content_prefix_reuse_token_ratio == 0.0
 
 
 def test_leftover_credited_on_full_hit() -> None:
@@ -134,8 +134,8 @@ def test_leftover_credited_on_full_hit() -> None:
     results = _replay_list([r1, r2])
     r2_result = results[1]
     assert r2_result.leftover_tokens == 1
-    assert r2_result.prefix_hit_tokens == 5   # 4 (block) + 1 (leftover)
-    assert r2_result.token_level_prefix_hit_ratio == 1.0
+    assert r2_result.content_prefix_reuse_tokens == 5   # 4 (block) + 1 (leftover)
+    assert r2_result.content_prefix_reuse_token_ratio == 1.0
 
 
 def test_leftover_not_credited_on_partial_hit() -> None:
@@ -146,10 +146,10 @@ def test_leftover_not_credited_on_partial_hit() -> None:
     r2 = _rec("r2", 1.0, [10, 99], token_count=9, block_size=4, arrival_index=1)
     results = _replay_list([r1, r2])
     r2_result = results[1]
-    assert r2_result.prefix_hit_blocks == 1
+    assert r2_result.content_prefix_reuse_blocks == 1
     assert r2_result.leftover_tokens == 1
-    assert r2_result.prefix_hit_tokens == 4   # only the 1 hit block × 4 tokens
-    assert abs(r2_result.token_level_prefix_hit_ratio - 4 / 9) < 1e-9
+    assert r2_result.content_prefix_reuse_tokens == 4   # only the 1 hit block × 4 tokens
+    assert abs(r2_result.content_prefix_reuse_token_ratio - 4 / 9) < 1e-9
 
 
 def test_leftover_tokens_computed_correctly() -> None:
@@ -211,8 +211,8 @@ def test_reuse_time_none_when_all_new_blocks() -> None:
 # F. Integration: base fields agree with V1 replay
 # ---------------------------------------------------------------------------
 
-def test_prefix_hit_blocks_agrees_with_v1() -> None:
-    """enriched_replay prefix_hit_blocks matches V1 replay for same input."""
+def test_content_prefix_reuse_blocks_agrees_with_v1() -> None:
+    """enriched_replay content_prefix_reuse_blocks matches V1 replay for same input."""
     from block_prefix_analyzer.replay import replay
 
     records = [
@@ -222,8 +222,8 @@ def test_prefix_hit_blocks_agrees_with_v1() -> None:
     v1_results = list(replay(records))
     v2_results = _replay_list(records)
     for v1, v2 in zip(v1_results, v2_results):
-        assert v1.prefix_hit_blocks == v2.prefix_hit_blocks
-        assert v1.reusable_block_count == v2.reusable_block_count
+        assert v1.content_prefix_reuse_blocks == v2.content_prefix_reuse_blocks
+        assert v1.content_reused_blocks_anywhere == v2.content_reused_blocks_anywhere
 
 
 def test_reusable_count_agrees_with_v1() -> None:
@@ -235,7 +235,7 @@ def test_reusable_count_agrees_with_v1() -> None:
     ]
     v1 = list(replay(records))
     v2 = _replay_list(records)
-    assert v1[1].reusable_block_count == v2[1].reusable_block_count
+    assert v1[1].content_reused_blocks_anywhere == v2[1].content_reused_blocks_anywhere
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ def test_enriched_replay_is_deterministic() -> None:
     r1 = _replay_list(records)
     r2 = _replay_list(records)
     for a, b in zip(r1, r2):
-        assert a.token_level_prefix_hit_ratio == b.token_level_prefix_hit_ratio
+        assert a.content_prefix_reuse_token_ratio == b.content_prefix_reuse_token_ratio
         assert a.mean_reuse_time == b.mean_reuse_time
 
 

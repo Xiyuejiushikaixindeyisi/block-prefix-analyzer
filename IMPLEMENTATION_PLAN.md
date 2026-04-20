@@ -33,7 +33,7 @@
   - `tests/test_replay.py` 全部通过（22 个测试）
 
 - [x] **Step 5 — Metrics 聚合**
-  - `PerRequestResult` 新增 `reusable_block_count`（按位置计数，不去重）
+  - `PerRequestResult` 新增 `content_reused_blocks_anywhere`（按位置计数，不去重）
   - replay 内维护 `seen_blocks` 集合，严格在 yield 之后更新，保持无 self-hit
   - `MetricsSummary`（frozen dataclass）：6 个计数/汇总字段 + 2 个预算比率
   - `compute_metrics(results) -> MetricsSummary`：纯聚合，不重扫 block 序列
@@ -77,7 +77,7 @@
 
 ### V2-full 指标（已完成）
 
-- [x] `v2/metrics.py` — `enriched_replay()`，新增 `token_level_prefix_hit_ratio` + `mean_reuse_time`
+- [x] `v2/metrics.py` — `enriched_replay()`，新增 `content_prefix_reuse_token_ratio` + `mean_reuse_time`
 - [x] `v2/metrics.py` — `compute_block_lifespans()`，离线 `lifespan` 指标
 - [x] `v2/session.py` — `is_root_request()` / `is_followup_request()` / `get_category()` / `group_by_session()`
 - [x] 45 个新测试，全部通过
@@ -111,7 +111,7 @@
 - `src/block_prefix_analyzer/metrics.py`：
   - `prefix_aware_ideal_hit_ratio`（micro + macro）
   - `block_level_reusable_ratio`（micro + macro）
-  - `token_level_prefix_hit_ratio`（在 `block_size` 与 `token_count` 齐全时启用）
+  - `content_prefix_reuse_token_ratio`（在 `block_size` 与 `token_count` 齐全时启用）
   - `reuse_time_stats`（默认 `last_seen`；输出 mean/p50/p95）
   - 所有函数纯函数式，仅依赖 `PerRequestResult` 列表 + 原始 `RequestRecord`。
 - `tests/test_metrics.py`：

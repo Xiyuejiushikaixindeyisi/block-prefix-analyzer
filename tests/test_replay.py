@@ -3,7 +3,7 @@
 Coverage matrix
 ---------------
 1.  Empty input → empty output.
-2.  Single record cold start → prefix_hit_blocks == 0.
+2.  Single record cold start → content_prefix_reuse_blocks == 0.
 3.  Identifying fields (request_id, timestamp, arrival_index) round-trip.
 4.  Second request full-prefix match against first.
 5.  Partial prefix match (sequences fork mid-way).
@@ -104,7 +104,7 @@ def test_single_record_cold_start_hit_is_zero() -> None:
     r = _make("a", 1.0, 0, [1, 2, 3])
     results = list(replay([r]))
     assert len(results) == 1
-    assert results[0].prefix_hit_blocks == 0
+    assert results[0].content_prefix_reuse_blocks == 0
 
 
 def test_single_record_fields_round_trip() -> None:
@@ -114,7 +114,7 @@ def test_single_record_fields_round_trip() -> None:
     assert res.timestamp == 42.5
     assert res.arrival_index == 7
     assert res.total_blocks == 2
-    assert res.prefix_hit_blocks == 0
+    assert res.content_prefix_reuse_blocks == 0
 
 
 # ---------------------------------------------------------------------------
@@ -125,8 +125,8 @@ def test_second_request_full_prefix_match() -> None:
     r1 = _make("a", 1, 0, [1, 2, 3])
     r2 = _make("b", 2, 1, [1, 2, 3])
     results = list(replay([r1, r2]))
-    assert results[0].prefix_hit_blocks == 0
-    assert results[1].prefix_hit_blocks == 3
+    assert results[0].content_prefix_reuse_blocks == 0
+    assert results[1].content_prefix_reuse_blocks == 3
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ def test_partial_prefix_match_at_fork() -> None:
     r1 = _make("a", 1, 0, [1, 2, 3])
     r2 = _make("b", 2, 1, [1, 2, 9])  # diverges at position 2
     results = list(replay([r1, r2]))
-    assert results[1].prefix_hit_blocks == 2
+    assert results[1].content_prefix_reuse_blocks == 2
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ def test_no_shared_prefix_gives_zero_hits() -> None:
     r1 = _make("a", 1, 0, [1, 2, 3])
     r2 = _make("b", 2, 1, [9, 8, 7])
     results = list(replay([r1, r2]))
-    assert results[1].prefix_hit_blocks == 0
+    assert results[1].content_prefix_reuse_blocks == 0
 
 
 # ---------------------------------------------------------------------------
@@ -160,9 +160,9 @@ def test_three_way_fork_only_shared_prefix_counted() -> None:
     r2 = _make("b", 2, 1, [1, 2, 4])
     r3 = _make("c", 3, 2, [1, 2, 5])
     results = list(replay([r1, r2, r3]))
-    assert results[0].prefix_hit_blocks == 0
-    assert results[1].prefix_hit_blocks == 2  # [1,2] from r1
-    assert results[2].prefix_hit_blocks == 2  # [1,2] shared by r1 and r2
+    assert results[0].content_prefix_reuse_blocks == 0
+    assert results[1].content_prefix_reuse_blocks == 2  # [1,2] from r1
+    assert results[2].content_prefix_reuse_blocks == 2  # [1,2] shared by r1 and r2
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +174,9 @@ def test_incremental_prefix_growth() -> None:
     r2 = _make("b", 2, 1, [1, 2])
     r3 = _make("c", 3, 2, [1, 2, 3])
     results = list(replay([r1, r2, r3]))
-    assert results[0].prefix_hit_blocks == 0
-    assert results[1].prefix_hit_blocks == 1  # [1] from r1
-    assert results[2].prefix_hit_blocks == 2  # [1,2] from r2
+    assert results[0].content_prefix_reuse_blocks == 0
+    assert results[1].content_prefix_reuse_blocks == 1  # [1] from r1
+    assert results[2].content_prefix_reuse_blocks == 2  # [1,2] from r2
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ def test_duplicate_block_ids_in_sequence() -> None:
     r1 = _make("a", 1, 0, [5, 5, 5])
     r2 = _make("b", 2, 1, [5, 5, 5])
     results = list(replay([r1, r2]))
-    assert results[1].prefix_hit_blocks == 3
+    assert results[1].content_prefix_reuse_blocks == 3
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ def test_empty_block_ids_yields_zeros() -> None:
     r = _make("a", 1, 0, [])
     results = list(replay([r]))
     assert results[0].total_blocks == 0
-    assert results[0].prefix_hit_blocks == 0
+    assert results[0].content_prefix_reuse_blocks == 0
 
 
 def test_empty_block_ids_does_not_affect_next_record() -> None:
@@ -206,7 +206,7 @@ def test_empty_block_ids_does_not_affect_next_record() -> None:
     r_empty = _make("a", 1, 0, [])
     r_full  = _make("b", 2, 1, [1, 2, 3])
     results = list(replay([r_empty, r_full]))
-    assert results[1].prefix_hit_blocks == 0
+    assert results[1].content_prefix_reuse_blocks == 0
 
 
 def test_empty_block_ids_after_populated_index() -> None:
@@ -214,7 +214,7 @@ def test_empty_block_ids_after_populated_index() -> None:
     r_empty = _make("b", 2, 1, [])
     results = list(replay([r_full, r_empty]))
     assert results[1].total_blocks == 0
-    assert results[1].prefix_hit_blocks == 0
+    assert results[1].content_prefix_reuse_blocks == 0
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ def test_replay_first_result_is_cold_regardless_of_input_order() -> None:
     r_early = _make("early", 1, 0, [10, 11])
     results = list(replay([r_late, r_early]))
     assert results[0].request_id == "early"
-    assert results[0].prefix_hit_blocks == 0
+    assert results[0].content_prefix_reuse_blocks == 0
 
 
 # ---------------------------------------------------------------------------
@@ -252,9 +252,9 @@ def test_same_timestamp_tiebreak_by_arrival_index() -> None:
     # Pass in scrambled order.
     results = list(replay([r2, r0, r1]))
     assert [r.request_id for r in results] == ["first", "second", "third"]
-    assert results[0].prefix_hit_blocks == 0
-    assert results[1].prefix_hit_blocks == 2
-    assert results[2].prefix_hit_blocks == 2
+    assert results[0].content_prefix_reuse_blocks == 0
+    assert results[1].content_prefix_reuse_blocks == 2
+    assert results[2].content_prefix_reuse_blocks == 2
 
 
 # ---------------------------------------------------------------------------
@@ -263,15 +263,15 @@ def test_same_timestamp_tiebreak_by_arrival_index() -> None:
 
 def test_single_record_no_self_hit() -> None:
     r = _make("a", 1, 0, [1, 2, 3])
-    assert list(replay([r]))[0].prefix_hit_blocks == 0
+    assert list(replay([r]))[0].content_prefix_reuse_blocks == 0
 
 
 def test_two_identical_requests_second_hits_first_not_itself() -> None:
     r1 = _make("a", 1, 0, [7, 8, 9])
     r2 = _make("b", 2, 1, [7, 8, 9])
     results = list(replay([r1, r2]))
-    assert results[0].prefix_hit_blocks == 0   # r1 must not match itself
-    assert results[1].prefix_hit_blocks == 3   # r2 matches r1's inserted data
+    assert results[0].content_prefix_reuse_blocks == 0   # r1 must not match itself
+    assert results[1].content_prefix_reuse_blocks == 3   # r2 matches r1's inserted data
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +325,7 @@ def test_spy_confirms_index_empty_at_first_query() -> None:
     # query comes before insert → index was empty when queried
     assert spy.ops[0] == ("query", (42, 43))
     assert spy.ops[1] == ("insert", (42, 43))
-    assert results[0].prefix_hit_blocks == 0
+    assert results[0].content_prefix_reuse_blocks == 0
 
 
 # ---------------------------------------------------------------------------
@@ -345,31 +345,31 @@ def test_result_fields_have_correct_types() -> None:
     assert isinstance(res.timestamp, float)
     assert isinstance(res.arrival_index, int)
     assert isinstance(res.total_blocks, int)
-    assert isinstance(res.prefix_hit_blocks, int)
-    assert isinstance(res.reusable_block_count, int)
+    assert isinstance(res.content_prefix_reuse_blocks, int)
+    assert isinstance(res.content_reused_blocks_anywhere, int)
 
 
 # ---------------------------------------------------------------------------
-# 20-26. reusable_block_count — per-position block-level reusability
+# 20-26. content_reused_blocks_anywhere — per-position block-level reusability
 # ---------------------------------------------------------------------------
 
-def test_reusable_block_count_cold_start_is_zero() -> None:
+def test_content_reused_blocks_anywhere_cold_start_is_zero() -> None:
     r = _make("a", 1, 0, [1, 2, 3])
-    assert list(replay([r]))[0].reusable_block_count == 0
+    assert list(replay([r]))[0].content_reused_blocks_anywhere == 0
 
 
-def test_reusable_block_count_full_match_on_second_request() -> None:
+def test_content_reused_blocks_anywhere_full_match_on_second_request() -> None:
     r1 = _make("a", 1, 0, [1, 2, 3])
     r2 = _make("b", 2, 1, [1, 2, 3])
     results = list(replay([r1, r2]))
-    assert results[1].reusable_block_count == 3
+    assert results[1].content_reused_blocks_anywhere == 3
 
 
-def test_reusable_block_count_partial_seen() -> None:
+def test_content_reused_blocks_anywhere_partial_seen() -> None:
     r1 = _make("a", 1, 0, [1, 2, 3])
     r2 = _make("b", 2, 1, [1, 2, 9])  # 9 never seen
     results = list(replay([r1, r2]))
-    assert results[1].reusable_block_count == 2  # positions 0,1 are reusable
+    assert results[1].content_reused_blocks_anywhere == 2  # positions 0,1 are reusable
 
 
 def test_reusable_count_higher_than_prefix_hit_when_not_contiguous() -> None:
@@ -378,25 +378,25 @@ def test_reusable_count_higher_than_prefix_hit_when_not_contiguous() -> None:
     r1 = _make("a", 1, 0, [1, 2, 3])
     r2 = _make("b", 2, 1, [9, 2, 3])
     results = list(replay([r1, r2]))
-    assert results[1].prefix_hit_blocks == 0
-    assert results[1].reusable_block_count == 2
+    assert results[1].content_prefix_reuse_blocks == 0
+    assert results[1].content_reused_blocks_anywhere == 2
 
 
 def test_reusable_count_positions_not_deduplicated() -> None:
     # The spec example: history has A; current is [A, A, B]
-    # Both A-positions count; B does not → reusable_block_count == 2
+    # Both A-positions count; B does not → content_reused_blocks_anywhere == 2
     r1 = _make("a", 1, 0, ["A"])
     r2 = _make("b", 2, 1, ["A", "A", "B"])
     results = list(replay([r1, r2]))
-    assert results[1].reusable_block_count == 2
+    assert results[1].content_reused_blocks_anywhere == 2
 
 
 def test_reusable_count_no_self_hit() -> None:
     # A single request must not count its own blocks as reusable
     r = _make("a", 1, 0, [5, 6, 7])
-    assert list(replay([r]))[0].reusable_block_count == 0
+    assert list(replay([r]))[0].content_reused_blocks_anywhere == 0
 
 
 def test_reusable_count_empty_block_ids() -> None:
     r = _make("a", 1, 0, [])
-    assert list(replay([r]))[0].reusable_block_count == 0
+    assert list(replay([r]))[0].content_reused_blocks_anywhere == 0

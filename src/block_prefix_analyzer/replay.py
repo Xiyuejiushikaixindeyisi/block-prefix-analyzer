@@ -22,17 +22,17 @@ current record.
 
 Two distinct reuse semantics
 -----------------------------
-``prefix_hit_blocks``
+``content_prefix_reuse_blocks``
     Counts only the **contiguous prefix from the start of the request**
     that matches a path already in the prefix index.  Once the first block
     position fails to match, all later positions are non-hits even if the
     individual block ids were seen before.  This is the stricter, main metric.
 
-``reusable_block_count``
+``content_reused_blocks_anywhere``
     Counts **every position** in the current request whose block id appeared
     in *any* earlier request, regardless of contiguity.  If block id ``A``
     was seen before and the current request is ``[A, A, B]``, both ``A``
-    positions count (``reusable_block_count == 2``), even if ``B`` has never
+    positions count (``content_reused_blocks_anywhere == 2``), even if ``B`` has never
     appeared before.  This is the looser, auxiliary metric.
 
 This module is intentionally narrow.  It produces raw per-request results
@@ -67,26 +67,26 @@ class PerRequestResult:
         Copied from the source record; reflects file-read order from loader.
     total_blocks:
         ``len(record.block_ids)``.  Zero for empty-sequence records.
-    prefix_hit_blocks:
+    content_prefix_reuse_blocks:
         Contiguous prefix hit count — the result of
         ``index.longest_prefix_match(block_ids)`` evaluated **before** the
         record was inserted.  Zero for the first record (cold start) and for
         any record whose first block has not been seen before.
-    reusable_block_count:
+    content_reused_blocks_anywhere:
         Per-position reusability count.  For each position ``i`` in
         ``block_ids``, if ``block_ids[i]`` appeared in any strictly earlier
         request, that position is counted.  Duplicate block ids within the
         current request are each counted independently (position-based, not
         set-based).  See module docstring for the semantic distinction from
-        ``prefix_hit_blocks``.
+        ``content_prefix_reuse_blocks``.
     """
 
     request_id: str
     timestamp: int | float
     arrival_index: int
     total_blocks: int
-    prefix_hit_blocks: int
-    reusable_block_count: int
+    content_prefix_reuse_blocks: int
+    content_reused_blocks_anywhere: int
 
 
 IndexFactory = Callable[[], PrefixIndex]
@@ -100,8 +100,8 @@ def replay(
     """Replay records in canonical order, yielding one result per record.
 
     See module docstring for the query-before-insert contract and the
-    semantic distinction between ``prefix_hit_blocks`` and
-    ``reusable_block_count``.
+    semantic distinction between ``content_prefix_reuse_blocks`` and
+    ``content_reused_blocks_anywhere``.
 
     Parameters
     ----------
@@ -135,8 +135,8 @@ def replay(
             timestamp=record.timestamp,
             arrival_index=record.arrival_index,
             total_blocks=len(record.block_ids),
-            prefix_hit_blocks=prefix_hit,
-            reusable_block_count=reusable_count,
+            content_prefix_reuse_blocks=prefix_hit,
+            content_reused_blocks_anywhere=reusable_count,
         )
 
         # Step 3: update state so this record is visible to future records

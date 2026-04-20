@@ -48,7 +48,7 @@ class TestAnalyzeHitMask:
     def test_all_miss(self):
         stats = _analyze_hit_mask([10, 20, 30], pool=set())
         assert stats.hit_mask == [0, 0, 0]
-        assert stats.prefix_hit_blocks == 0
+        assert stats.content_prefix_reuse_blocks == 0
         assert stats.reusable_blocks_anywhere == 0
         assert not stats.has_nonprefix_hit
         assert stats.first_miss_pos == 0
@@ -57,7 +57,7 @@ class TestAnalyzeHitMask:
     def test_all_hit(self):
         stats = _analyze_hit_mask([10, 20, 30], pool={10, 20, 30})
         assert stats.hit_mask == [1, 1, 1]
-        assert stats.prefix_hit_blocks == 3
+        assert stats.content_prefix_reuse_blocks == 3
         assert stats.reusable_blocks_anywhere == 3
         assert not stats.has_nonprefix_hit
         assert stats.first_miss_pos is None
@@ -67,7 +67,7 @@ class TestAnalyzeHitMask:
         """1110 — legal, no non-prefix hit."""
         stats = _analyze_hit_mask([10, 20, 30, 99], pool={10, 20, 30})
         assert stats.hit_mask == [1, 1, 1, 0]
-        assert stats.prefix_hit_blocks == 3
+        assert stats.content_prefix_reuse_blocks == 3
         assert stats.reusable_blocks_anywhere == 3
         assert not stats.has_nonprefix_hit
         assert stats.first_miss_pos == 3
@@ -77,7 +77,7 @@ class TestAnalyzeHitMask:
         """10100 — first miss at pos 1, hit again at pos 2 — violation."""
         stats = _analyze_hit_mask([10, 99, 20, 88, 77], pool={10, 20})
         assert stats.hit_mask == [1, 0, 1, 0, 0]
-        assert stats.prefix_hit_blocks == 1
+        assert stats.content_prefix_reuse_blocks == 1
         assert stats.reusable_blocks_anywhere == 2
         assert stats.has_nonprefix_hit
         assert stats.first_miss_pos == 1
@@ -87,7 +87,7 @@ class TestAnalyzeHitMask:
         """0001 — miss from start, hit at last position."""
         stats = _analyze_hit_mask([99, 88, 77, 10], pool={10})
         assert stats.hit_mask == [0, 0, 0, 1]
-        assert stats.prefix_hit_blocks == 0
+        assert stats.content_prefix_reuse_blocks == 0
         assert stats.reusable_blocks_anywhere == 1
         assert stats.has_nonprefix_hit
         assert stats.first_miss_pos == 0
@@ -96,13 +96,13 @@ class TestAnalyzeHitMask:
     def test_single_block_miss(self):
         stats = _analyze_hit_mask([99], pool={10})
         assert stats.hit_mask == [0]
-        assert stats.prefix_hit_blocks == 0
+        assert stats.content_prefix_reuse_blocks == 0
         assert not stats.has_nonprefix_hit
 
     def test_single_block_hit(self):
         stats = _analyze_hit_mask([10], pool={10})
         assert stats.hit_mask == [1]
-        assert stats.prefix_hit_blocks == 1
+        assert stats.content_prefix_reuse_blocks == 1
         assert not stats.has_nonprefix_hit
 
 
@@ -119,7 +119,7 @@ class TestNoSelfHit:
         r = result.per_request[0]
         # Pool is empty when r1 is analyzed
         assert r.hit_mask == [0, 0, 0]
-        assert r.prefix_hit_blocks == 0
+        assert r.content_prefix_reuse_blocks == 0
         assert not r.has_nonprefix_hit
 
     def test_second_request_sees_first(self):
@@ -133,7 +133,7 @@ class TestNoSelfHit:
         assert r1.hit_mask == [0, 0, 0]
         # r2: 10, 20 in pool (from r1); 99 not → [1, 1, 0]
         assert r2.hit_mask == [1, 1, 0]
-        assert r2.prefix_hit_blocks == 2
+        assert r2.content_prefix_reuse_blocks == 2
         assert not r2.has_nonprefix_hit
 
 
@@ -151,10 +151,10 @@ class TestSameTimestampOrdering:
         r1, r2 = result.per_request
         # r1 analyzed first: pool empty → all miss
         assert r1.hit_mask == [0, 0]
-        assert r1.prefix_hit_blocks == 0
+        assert r1.content_prefix_reuse_blocks == 0
         # r2 analyzed second: pool has {10, 20} from r1 → [1, 1, 0]
         assert r2.hit_mask == [1, 1, 0]
-        assert r2.prefix_hit_blocks == 2
+        assert r2.content_prefix_reuse_blocks == 2
         assert not r2.has_nonprefix_hit
 
     def test_no_future_leak_to_lower_arrival_index(self):
@@ -187,11 +187,11 @@ class TestValidPrefixPattern:
         assert not r1.has_nonprefix_hit
 
         assert r2.hit_mask == [1, 1, 0]
-        assert r2.prefix_hit_blocks == 2
+        assert r2.content_prefix_reuse_blocks == 2
         assert not r2.has_nonprefix_hit
 
         assert r3.hit_mask == [1, 1, 1, 0]
-        assert r3.prefix_hit_blocks == 3
+        assert r3.content_prefix_reuse_blocks == 3
         assert not r3.has_nonprefix_hit
 
 
@@ -210,7 +210,7 @@ class TestInvalidPattern:
         r2 = result.per_request[1]
 
         assert r2.hit_mask == [1, 0, 1]
-        assert r2.prefix_hit_blocks == 1
+        assert r2.content_prefix_reuse_blocks == 1
         assert r2.reusable_blocks_anywhere == 2
         assert r2.has_nonprefix_hit
         assert r2.first_miss_pos == 1

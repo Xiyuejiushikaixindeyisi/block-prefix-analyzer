@@ -37,7 +37,7 @@ Fixtures
 ``with_empty.jsonl``
     Three requests: one normal, one with empty ``block_ids`` (excluded from
     denominator), one that has zero prefix hits but two reusable positions
-    (tests the semantic gap between prefix_hit and reusable_block_count).
+    (tests the semantic gap between prefix_hit and content_reused_blocks_anywhere).
 """
 from __future__ import annotations
 
@@ -177,43 +177,43 @@ def _load_golden(name: str) -> dict:
 def test_golden_minimal_first_row_is_cold_start() -> None:
     g = _load_golden("minimal.golden.json")
     first = g["replay_rows"][0]
-    assert first["prefix_hit_blocks"] == 0, "first request must be a cold start"
-    assert first["reusable_block_count"] == 0, "first request has no reusable blocks"
+    assert first["content_prefix_reuse_blocks"] == 0, "first request must be a cold start"
+    assert first["content_reused_blocks_anywhere"] == 0, "first request has no reusable blocks"
 
 
 def test_golden_minimal_second_row_full_match() -> None:
     g = _load_golden("minimal.golden.json")
     second = g["replay_rows"][1]
-    assert second["prefix_hit_blocks"] == second["total_blocks"]
+    assert second["content_prefix_reuse_blocks"] == second["total_blocks"]
 
 
 def test_golden_minimal_third_row_partial_match() -> None:
     g = _load_golden("minimal.golden.json")
     third = g["replay_rows"][2]
-    assert 0 < third["prefix_hit_blocks"] < third["total_blocks"]
+    assert 0 < third["content_prefix_reuse_blocks"] < third["total_blocks"]
 
 
 def test_golden_minimal_metrics_consistency() -> None:
     g = _load_golden("minimal.golden.json")
     m = g["metrics"]
-    total_hit = sum(r["prefix_hit_blocks"] for r in g["replay_rows"])
-    assert m["total_prefix_hit_blocks"] == total_hit
+    total_hit = sum(r["content_prefix_reuse_blocks"] for r in g["replay_rows"])
+    assert m["total_content_prefix_reuse_blocks"] == total_hit
     denom = sum(r["total_blocks"] for r in g["replay_rows"] if r["total_blocks"] > 0)
     assert m["total_blocks"] == denom
-    assert abs(m["overall_prefix_hit_rate"] - total_hit / denom) < 1e-12
+    assert abs(m["content_prefix_reuse_rate"] - total_hit / denom) < 1e-12
 
 
 def test_golden_forking_shared_prefix_both_users_hit_two() -> None:
     g = _load_golden("forking.golden.json")
     rows = {r["request_id"]: r for r in g["replay_rows"]}
-    assert rows["user-a"]["prefix_hit_blocks"] == 2
-    assert rows["user-b"]["prefix_hit_blocks"] == 2
+    assert rows["user-a"]["content_prefix_reuse_blocks"] == 2
+    assert rows["user-b"]["content_prefix_reuse_blocks"] == 2
 
 
 def test_golden_forking_combo_hits_three() -> None:
     g = _load_golden("forking.golden.json")
     rows = {r["request_id"]: r for r in g["replay_rows"]}
-    assert rows["combo"]["prefix_hit_blocks"] == 3
+    assert rows["combo"]["content_prefix_reuse_blocks"] == 3
 
 
 def test_golden_with_empty_denominator_excludes_heartbeat() -> None:
@@ -230,17 +230,17 @@ def test_golden_with_empty_reusable_exceeds_prefix_hit() -> None:
     rows = {r["request_id"]: r for r in g["replay_rows"]}
     user = rows["user"]
     # user starts with unseen block 9 → no prefix hit; but 2,3 are reusable
-    assert user["prefix_hit_blocks"] == 0
-    assert user["reusable_block_count"] == 2
-    assert user["reusable_block_count"] > user["prefix_hit_blocks"]
+    assert user["content_prefix_reuse_blocks"] == 0
+    assert user["content_reused_blocks_anywhere"] == 2
+    assert user["content_reused_blocks_anywhere"] > user["content_prefix_reuse_blocks"]
 
 
-def test_golden_with_empty_overall_prefix_hit_rate_is_zero() -> None:
+def test_golden_with_empty_content_prefix_reuse_rate_is_zero() -> None:
     g = _load_golden("with_empty.golden.json")
-    assert g["metrics"]["overall_prefix_hit_rate"] == 0.0
+    assert g["metrics"]["content_prefix_reuse_rate"] == 0.0
 
 
 def test_golden_with_empty_reusable_ratio_is_one_third() -> None:
     g = _load_golden("with_empty.golden.json")
-    ratio = g["metrics"]["overall_block_level_reusable_ratio"]
+    ratio = g["metrics"]["content_block_reuse_ratio"]
     assert abs(ratio - 1 / 3) < 1e-12

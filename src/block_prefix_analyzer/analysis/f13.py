@@ -2,7 +2,7 @@
 
 Two event definitions are supported (event_definition parameter):
 
-  "reusable"
+  "content_block_reuse"
       For each single-turn request, for each unique block in its block_ids
       that appeared in any strictly earlier request, form one reuse event.
       Block identity is hash_id equality.  Blocks are deduped within the
@@ -10,9 +10,9 @@ Two event definitions are supported (event_definition parameter):
       reusable semantic — the widest aperture — and is closer to the paper's
       main definition.
 
-  "prefix"
+  "content_prefix_reuse"
       For each single-turn request, first determine the contiguous prefix-hit
-      segment (blocks at positions 0 .. prefix_hit_blocks-1 that match the
+      segment (blocks at positions 0 .. content_prefix_reuse_blocks-1 that match the
       prefix trie from the start).  Take the unique blocks within that
       segment, then form one reuse event per block that was seen before.
       Blocks outside the prefix segment are excluded even if they were
@@ -56,7 +56,7 @@ from block_prefix_analyzer.index.trie import TrieIndex
 from block_prefix_analyzer.types import BlockId, RequestRecord, sort_records
 from block_prefix_analyzer.v2.session import group_by_session
 
-EventDefinition = Literal["reusable", "prefix"]
+EventDefinition = Literal["content_block_reuse", "content_prefix_reuse"]
 
 DEFAULT_TYPE_LABEL_MAPPING: dict[str, str] = {
     "text": "Text",
@@ -131,7 +131,7 @@ class F13Series:
     Attributes
     ----------
     event_definition:
-        ``"reusable"`` or ``"prefix"``.
+        ``"content_block_reuse"`` or ``"content_prefix_reuse"``.
     events:
         All reuse events observed during replay of single-turn requests.
     cdf_rows:
@@ -144,9 +144,9 @@ class F13Series:
         Single-turn requests with at least one reuse event.
     request_count_without_reuse:
         Single-turn requests with zero reuse events.
-    reuse_event_count_total:
+    content_block_reuse_event_count_total:
         Total number of individual reuse events.
-    reuse_event_count_over_56min:
+    content_block_reuse_event_count_over_56min:
         Events with reuse_time > x_axis_max_minutes (not excluded from CDF).
     x_axis_max_minutes:
         Nominal x-axis maximum for plotting (does not affect CDF computation).
@@ -159,8 +159,8 @@ class F13Series:
     single_turn_request_count: int
     request_count_with_reuse: int
     request_count_without_reuse: int
-    reuse_event_count_total: int
-    reuse_event_count_over_56min: int
+    content_block_reuse_event_count_total: int
+    content_block_reuse_event_count_over_56min: int
     x_axis_max_minutes: float
 
 
@@ -237,11 +237,11 @@ def compute_f13_series(
         All records from a TraceA JSONL file.  Must include ``block_ids``
         and ``metadata["parent_chat_id"]`` / ``metadata["type"]``.
     event_definition:
-        ``"reusable"`` — block-level reusable events (any seen block).
-        ``"prefix"``   — prefix-hit-segment events only.
+        ``"content_block_reuse"`` — block-level reusable events (any seen block).
+        ``"content_prefix_reuse"``   — prefix-hit-segment events only.
     x_axis_max_minutes:
         Nominal x-axis maximum (default 56).  Events beyond this limit are
-        counted in ``reuse_event_count_over_56min`` but stay in the CDF.
+        counted in ``content_block_reuse_event_count_over_56min`` but stay in the CDF.
     type_label_mapping:
         Override for type → display label.  Defaults to
         :data:`DEFAULT_TYPE_LABEL_MAPPING`.
@@ -266,12 +266,12 @@ def compute_f13_series(
             req_type = record.metadata.get("type", "unknown")
             label = type_label_mapping.get(req_type, req_type)
 
-            if event_definition == "reusable":
+            if event_definition == "content_block_reuse":
                 eligible: set[BlockId] = {
                     bid for bid in set(record.block_ids)
                     if bid in last_seen_ts
                 }
-            else:  # "prefix"
+            else:  # "content_prefix_reuse"
                 prefix_segment = record.block_ids[:prefix_hit]
                 eligible = {
                     bid for bid in prefix_segment
@@ -312,8 +312,8 @@ def compute_f13_series(
         single_turn_request_count=len(single_turn_ids),
         request_count_with_reuse=len(requests_with_reuse),
         request_count_without_reuse=len(single_turn_ids) - len(requests_with_reuse),
-        reuse_event_count_total=len(all_events),
-        reuse_event_count_over_56min=over_count,
+        content_block_reuse_event_count_total=len(all_events),
+        content_block_reuse_event_count_over_56min=over_count,
         x_axis_max_minutes=x_axis_max_minutes,
     )
 
@@ -413,12 +413,12 @@ def save_breakdown_csv(series: F13Series, path: Path) -> None:
     """Write request-level breakdown to CSV with event-definition-specific column names."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    is_prefix = series.event_definition == "prefix"
-    count_col = "prefix_reusable_request_count" if is_prefix else "reusable_request_count"
+    is_prefix = series.event_definition == "content_prefix_reuse"
+    count_col = "content_prefix_reused_request_count" if is_prefix else "content_reused_request_count"
     frac_col = (
-        "prefix_reusable_request_fraction_over_all_single_turn_requests"
+        "content_prefix_reused_request_fraction_over_all_single_turn_requests"
         if is_prefix else
-        "reusable_request_fraction_over_all_single_turn_requests"
+        "content_reused_request_fraction_over_all_single_turn_requests"
     )
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -456,8 +456,8 @@ def save_metadata_json(
         "single_turn_request_count": series.single_turn_request_count,
         "request_count_with_reuse": series.request_count_with_reuse,
         "request_count_without_reuse": series.request_count_without_reuse,
-        "reuse_event_count_total": series.reuse_event_count_total,
-        "reuse_event_count_over_56min": series.reuse_event_count_over_56min,
+        "content_block_reuse_event_count_total": series.content_block_reuse_event_count_total,
+        "content_block_reuse_event_count_over_56min": series.content_block_reuse_event_count_over_56min,
         "note_cdf": (
             "CDF is computed over ALL events; x_axis_max_minutes controls "
             "plotting x-axis only, not CDF re-normalisation"

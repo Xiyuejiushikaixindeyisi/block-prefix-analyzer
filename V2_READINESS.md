@@ -110,7 +110,7 @@ corresponding update to all golden fixtures and the CLAUDE.md definition table.
 |---|---|
 | **block-level reusable ratio** | For each position `i` in `block_ids`, if `block_ids[i]` appeared in any strictly earlier request, position `i` is counted. Widest aperture. |
 | **prefix-aware ideal hit ratio** | Only contiguous blocks from the request start that match the prefix trie count. First miss terminates the run. Main metric. |
-| **token-level prefix hit ratio** | `prefix_hit_tokens / total_tokens` where `prefix_hit_tokens = prefix_hit_blocks × block_size`. If all full blocks are hit, the partial last block (leftover) is also credited. |
+| **token-level prefix hit ratio** | `content_prefix_reuse_tokens / total_tokens` where `content_prefix_reuse_tokens = content_prefix_reuse_blocks × block_size`. If all full blocks are hit, the partial last block (leftover) is also credited. |
 | **reuse_time** | `current_request.timestamp − last_seen_ts[block_id]`. Per-block, mean reported per request. Intra-request duplicates contribute one sample only. |
 | **lifespan** | `last_reuse_timestamp − first_seen_timestamp` per block across the full trace. Zero if the block is never reused by a later request. Offline metric. |
 

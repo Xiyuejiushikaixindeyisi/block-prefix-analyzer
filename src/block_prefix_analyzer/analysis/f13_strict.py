@@ -43,7 +43,7 @@ from block_prefix_analyzer.types import BlockId, RequestRecord, sort_records
 
 # ---- Frozen operational constants ----
 SINGLE_TURN_DEFINITION = "root_requests__parent_chat_id_eq_neg1_or_absent"
-EVENT_DEFINITION = "block_level_reusable__single_turn_pool"
+EVENT_DEFINITION = "content_block_reuse__single_turn_pool"
 REUSE_TIME_DEFINITION = "last_seen__current_ts_minus_last_seen_ts_in_seconds"
 DEDUPE_RULE = "set_dedup__one_event_per_unique_block_per_request"
 # Main inset: forward-looking
@@ -150,7 +150,7 @@ def compute_f13_strict(
 
     Inset (FORWARD-LOOKING)
     -----------------------
-    A root request is "reusable" if at least one of its blocks appears in a
+    A root request is "content_block_reuse" if at least one of its blocks appears in a
     temporally LATER root request.  This is the producer-direction metric:
     "does this request contribute content that future root requests will reuse?"
     Computed via f13_forward_inset.compute_forward_inset().
@@ -219,8 +219,8 @@ def compute_f13_strict(
         single_turn_request_count=len(single_turn_ids),
         request_count_with_reuse=forward_reusable_count,   # FORWARD-LOOKING
         request_count_without_reuse=len(single_turn_ids) - forward_reusable_count,
-        reuse_event_count_total=len(all_events),
-        reuse_event_count_over_56min=over_count,
+        content_block_reuse_event_count_total=len(all_events),
+        content_block_reuse_event_count_over_56min=over_count,
         x_axis_max_minutes=x_axis_max_minutes,
     )
 
@@ -267,8 +267,8 @@ def save_strict_breakdown_csv(series: F13Series, path: Path) -> None:
         w = csv.writer(f)
         w.writerow([
             "request_type", "display_label",
-            "reusable_request_count",
-            "reusable_request_fraction_over_all_single_turn_requests",
+            "content_reused_request_count",
+            "content_reused_request_fraction_over_all_single_turn_requests",
         ])
         for row in series.breakdown_rows:
             w.writerow([row.request_type, row.display_label,
@@ -304,13 +304,13 @@ def save_strict_metadata_json(
         "x_axis_max_minutes": series.x_axis_max_minutes,
         "single_turn_request_count": total,
         # Forward-looking inset (main)
-        "reusable_request_count": series.request_count_with_reuse,
+        "content_reused_request_count": series.request_count_with_reuse,
         "not_reusable_request_count": series.request_count_without_reuse,
         "reusable_request_ratio": (
             series.request_count_with_reuse / total if total > 0 else 0.0
         ),
-        "reuse_event_count_total": series.reuse_event_count_total,
-        "reuse_event_count_over_56min": series.reuse_event_count_over_56min,
+        "content_block_reuse_event_count_total": series.content_block_reuse_event_count_total,
+        "content_block_reuse_event_count_over_56min": series.content_block_reuse_event_count_over_56min,
         # Backward-looking diagnostic (explicitly labelled)
         "diagnostic__backward_any_hit_request_count": backward_reusable_count,
         "diagnostic__backward_any_hit_request_ratio": (

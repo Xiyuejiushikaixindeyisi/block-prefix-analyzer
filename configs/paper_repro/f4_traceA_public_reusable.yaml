@@ -1,13 +1,13 @@
 # F4 paper reproduction — main definition
 # Figure: F4_traceA_public (paper reproduction)
-# Hit definition: reusable_block_count
+# Hit definition: content_reused_blocks_anywhere
 #   A block position is "hit" if that block hash appeared in ANY earlier request.
 #   This is the widest reuse metric and the closest to the paper's Figure 4 definition.
 # Adaptation note: public TraceA is a 2-hour window; paper Figure 4 uses a full day.
 
 trace_name: traceA
 input_file: data/public/qwen_traceA_blksz_16.jsonl
-hit_metric: reusable
+hit_metric: content_block_reuse
 bin_size_seconds: 60
 output_dir: outputs/paper_repro/f4_traceA_public_reusable
 figure_variant: main_reproduction

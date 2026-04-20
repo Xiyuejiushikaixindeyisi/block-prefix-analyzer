@@ -73,8 +73,8 @@ def run(config: dict[str, str], project_root: Path) -> None:
 
     print()
     print(f"  single_turn_requests (root):        {total}")
-    print(f"  reuse_events_total (CDF):           {series.reuse_event_count_total}")
-    print(f"  events_over_56min:                  {series.reuse_event_count_over_56min}")
+    print(f"  reuse_events_total (CDF):           {series.content_block_reuse_event_count_total}")
+    print(f"  events_over_56min:                  {series.content_block_reuse_event_count_over_56min}")
     print()
     print(f"  [INSET — FORWARD-LOOKING]")
     print(f"  reusable_by_future_root:            {fwd_count} ({fwd_pct:.1f}%)")

@@ -11,7 +11,7 @@
 #
 # This is the main reproduction figure, closer to the paper's primary definition.
 
-event_definition: reusable
+event_definition: content_block_reuse
 input_file: data/public/qwen_traceA_blksz_16.jsonl
 output_dir: outputs/paper_repro/f13_traceA_public_reusable
 trace_name: traceA_public

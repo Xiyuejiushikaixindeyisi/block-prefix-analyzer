@@ -19,7 +19,7 @@
 #   Semantics: single-turn <-> single-turn reuse, backward-looking.
 
 single_turn_definition: root_requests
-event_definition: reusable
+event_definition: content_block_reuse
 breakdown_definition: reusable_by_another_single_turn_request
 input_file: data/public/qwen_traceA_blksz_16.jsonl
 output_dir: outputs/paper_repro/f13_traceA_public_strict

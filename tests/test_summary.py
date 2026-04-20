@@ -50,10 +50,10 @@ _SAMPLE = MetricsSummary(
     non_empty_request_count=8,
     cold_start_request_count=3,
     total_blocks=100,
-    total_prefix_hit_blocks=50,
-    total_reusable_blocks=60,
-    overall_prefix_hit_rate=0.5,
-    overall_block_level_reusable_ratio=0.6,
+    total_content_prefix_reuse_blocks=50,
+    total_content_reused_blocks_anywhere=60,
+    content_prefix_reuse_rate=0.5,
+    content_block_reuse_ratio=0.6,
 )
 
 _ZERO = MetricsSummary(
@@ -61,10 +61,10 @@ _ZERO = MetricsSummary(
     non_empty_request_count=0,
     cold_start_request_count=0,
     total_blocks=0,
-    total_prefix_hit_blocks=0,
-    total_reusable_blocks=0,
-    overall_prefix_hit_rate=0.0,
-    overall_block_level_reusable_ratio=0.0,
+    total_content_prefix_reuse_blocks=0,
+    total_content_reused_blocks_anywhere=0,
+    content_prefix_reuse_rate=0.0,
+    content_block_reuse_ratio=0.0,
 )
 
 _EXPECTED_FIELD_NAMES = [
@@ -72,10 +72,10 @@ _EXPECTED_FIELD_NAMES = [
     "non_empty_request_count",
     "cold_start_request_count",
     "total_blocks",
-    "total_prefix_hit_blocks",
-    "total_reusable_blocks",
-    "overall_prefix_hit_rate",
-    "overall_block_level_reusable_ratio",
+    "total_content_prefix_reuse_blocks",
+    "total_content_reused_blocks_anywhere",
+    "content_prefix_reuse_rate",
+    "content_block_reuse_ratio",
 ]
 
 
@@ -125,10 +125,10 @@ def test_format_summary_ratio_one_third() -> None:
         non_empty_request_count=3,
         cold_start_request_count=1,
         total_blocks=3,
-        total_prefix_hit_blocks=1,
-        total_reusable_blocks=1,
-        overall_prefix_hit_rate=1 / 3,
-        overall_block_level_reusable_ratio=1 / 3,
+        total_content_prefix_reuse_blocks=1,
+        total_content_reused_blocks_anywhere=1,
+        content_prefix_reuse_rate=1 / 3,
+        content_block_reuse_ratio=1 / 3,
     )
     text = format_summary(s)
     # 1/3 * 100 = 33.3333... → rendered as "33.3333%"
@@ -179,8 +179,8 @@ def test_summary_to_dict_values_round_trip() -> None:
     restored = json.loads(json.dumps(d))
     assert restored["request_count"] == 10
     assert restored["total_blocks"] == 100
-    assert abs(restored["overall_prefix_hit_rate"] - 0.5) < 1e-12
-    assert abs(restored["overall_block_level_reusable_ratio"] - 0.6) < 1e-12
+    assert abs(restored["content_prefix_reuse_rate"] - 0.5) < 1e-12
+    assert abs(restored["content_block_reuse_ratio"] - 0.6) < 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +225,7 @@ def test_csv_row_values_correct() -> None:
 def test_csv_header_and_row_are_zippable() -> None:
     pairs = dict(zip(csv_header(), summary_to_csv_row(_SAMPLE)))
     assert pairs["request_count"] == 10
-    assert abs(pairs["overall_prefix_hit_rate"] - 0.5) < 1e-12
+    assert abs(pairs["content_prefix_reuse_rate"] - 0.5) < 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +272,7 @@ def test_write_json_keys_and_values_correct(tmp_path: Path) -> None:
     parsed = json.loads(p.read_text(encoding="utf-8"))
     assert set(parsed.keys()) == set(_EXPECTED_FIELD_NAMES)
     assert parsed["request_count"] == 10
-    assert abs(parsed["overall_prefix_hit_rate"] - 0.5) < 1e-12
+    assert abs(parsed["content_prefix_reuse_rate"] - 0.5) < 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +307,7 @@ def test_write_csv_data_row_values_correct(tmp_path: Path) -> None:
     # CSV stores everything as strings; convert back for comparison
     assert int(data_row[0]) == 10            # request_count
     assert int(data_row[3]) == 100           # total_blocks
-    assert abs(float(data_row[6]) - 0.5) < 1e-12   # overall_prefix_hit_rate
+    assert abs(float(data_row[6]) - 0.5) < 1e-12   # content_prefix_reuse_rate
 
 
 # ---------------------------------------------------------------------------
@@ -347,10 +347,10 @@ def test_summary_works_with_only_metrics_summary() -> None:
         non_empty_request_count=1,
         cold_start_request_count=1,
         total_blocks=3,
-        total_prefix_hit_blocks=0,
-        total_reusable_blocks=0,
-        overall_prefix_hit_rate=0.0,
-        overall_block_level_reusable_ratio=0.0,
+        total_content_prefix_reuse_blocks=0,
+        total_content_reused_blocks_anywhere=0,
+        content_prefix_reuse_rate=0.0,
+        content_block_reuse_ratio=0.0,
     )
     text = format_summary(s)
     d = summary_to_dict(s)

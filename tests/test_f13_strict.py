@@ -162,7 +162,7 @@ class TestArea2_MultiTurnRootsIncluded:
 
         series = compute_f13_strict_series([a1, b1, b2])
         # b1 is root and sees block 100 from a1 → 1 event
-        assert series.reuse_event_count_total == 1
+        assert series.content_block_reuse_event_count_total == 1
         # b2 is follow-up and is completely skipped
         # b1 is included even though it's a multi-turn session root
         assert series.single_turn_request_count == 2  # a1 and b1
@@ -181,11 +181,11 @@ class TestArea3_BlockLevelReusableEvents:
         r1 = _rec(1, 0, [1, 2, 3], parent_chat_id=-1)
         r2 = _rec(2, 10, [99, 1], parent_chat_id=-1)
         series = compute_f13_strict_series([r1, r2])
-        assert series.reuse_event_count_total == 1  # block 1 is reusable despite non-prefix position
+        assert series.content_block_reuse_event_count_total == 1  # block 1 is reusable despite non-prefix position
 
     def test_event_definition_tag(self, base_records):
         series = compute_f13_strict_series(base_records)
-        assert "reusable" in series.event_definition
+        assert "content_block_reuse" in series.event_definition
         assert "prefix" not in series.event_definition
 
 
@@ -280,7 +280,7 @@ class TestArea7_FollowUpsExcludedFromPool:
         r3 = _rec(3, 20, [3, 5], parent_chat_id=-1)  # root
         series = compute_f13_strict_series([r1, r2, r3])
         # CDF: block 3 only appeared in r2 (follow-up), which doesn't update pool → 0 events
-        assert series.reuse_event_count_total == 0
+        assert series.content_block_reuse_event_count_total == 0
         # Forward inset: r1 blocks={1,2} vs r3 blocks={3,5} → no overlap → 0 forward-reusable
         assert series.request_count_with_reuse == 0
 
@@ -329,7 +329,7 @@ class TestArea8_CDFMonotonicity:
     def test_cold_start_no_events_no_cdf_rows(self):
         r1 = _rec(1, 0, [1, 2], parent_chat_id=-1)
         series = compute_f13_strict_series([r1])
-        assert series.reuse_event_count_total == 0
+        assert series.content_block_reuse_event_count_total == 0
         assert series.cdf_rows == []
 
 
@@ -347,8 +347,8 @@ class TestArea9_OutputSchema:
         assert hasattr(series, "single_turn_request_count")
         assert hasattr(series, "request_count_with_reuse")
         assert hasattr(series, "request_count_without_reuse")
-        assert hasattr(series, "reuse_event_count_total")
-        assert hasattr(series, "reuse_event_count_over_56min")
+        assert hasattr(series, "content_block_reuse_event_count_total")
+        assert hasattr(series, "content_block_reuse_event_count_over_56min")
         assert hasattr(series, "x_axis_max_minutes")
 
     def test_cdf_csv_columns(self, base_records, tmp_path):
@@ -368,8 +368,8 @@ class TestArea9_OutputSchema:
             header = f.readline().strip().split(",")
         assert header == [
             "request_type", "display_label",
-            "reusable_request_count",
-            "reusable_request_fraction_over_all_single_turn_requests",
+            "content_reused_request_count",
+            "content_reused_request_fraction_over_all_single_turn_requests",
         ]
 
     def test_metadata_json_required_keys(self, base_records, tmp_path):
@@ -387,9 +387,9 @@ class TestArea9_OutputSchema:
             "dedupe_within_request_rule", "breakdown_definition",
             "pool_definition_for_cdf", "pool_definition_for_breakdown",
             "type_label_mapping", "x_axis_max_minutes",
-            "single_turn_request_count", "reusable_request_count",
-            "not_reusable_request_count", "reuse_event_count_total",
-            "reuse_event_count_over_56min", "note_public_adaptation",
+            "single_turn_request_count", "content_reused_request_count",
+            "not_reusable_request_count", "content_block_reuse_event_count_total",
+            "content_block_reuse_event_count_over_56min", "note_public_adaptation",
         ]
         for key in required_keys:
             assert key in meta, f"Missing metadata key: {key}"
@@ -399,8 +399,8 @@ class TestArea9_OutputSchema:
         r1 = _rec(1, 0,    [99], parent_chat_id=-1)
         r2 = _rec(2, 3361, [99], parent_chat_id=-1)
         series = compute_f13_strict_series([r1, r2], x_axis_max_minutes=56.0)
-        assert series.reuse_event_count_total == 1      # counted in total
-        assert series.reuse_event_count_over_56min == 1  # also flagged
+        assert series.content_block_reuse_event_count_total == 1      # counted in total
+        assert series.content_block_reuse_event_count_over_56min == 1  # also flagged
         assert len(series.cdf_rows) == 1                # stays in CDF
 
 
@@ -413,7 +413,7 @@ class TestArea10_TypeLabelMapping:
         r1 = _rec(1, 0,  [1, 2], parent_chat_id=-1, req_type="image")
         r2 = _rec(2, 10, [1, 3], parent_chat_id=-1, req_type="image")
         series = compute_f13_strict_series([r1, r2])
-        assert series.reuse_event_count_total == 1
+        assert series.content_block_reuse_event_count_total == 1
         evt = series.events[0]
         assert evt.request_type == "image"
         assert evt.display_label == "Multimedia"

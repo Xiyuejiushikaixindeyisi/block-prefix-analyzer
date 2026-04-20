@@ -41,7 +41,7 @@ def _load_flat_yaml(path: Path) -> dict[str, str]:
 
 def run(config: dict[str, str], project_root: Path) -> None:
     event_def = config["event_definition"]
-    assert event_def in ("reusable", "prefix"), f"unknown event_definition: {event_def!r}"
+    assert event_def in ("content_block_reuse", "content_prefix_reuse"), f"unknown event_definition: {event_def!r}"
 
     input_path = project_root / config["input_file"]
     output_dir = project_root / config["output_dir"]
@@ -60,11 +60,11 @@ def run(config: dict[str, str], project_root: Path) -> None:
     series = compute_f13_series(records, event_definition=event_def, x_axis_max_minutes=x_axis_max)
 
     print(f"  single_turn_requests: {series.single_turn_request_count}")
-    print(f"  reuse_events_total:   {series.reuse_event_count_total}")
-    print(f"  events_over_56min:    {series.reuse_event_count_over_56min}")
+    print(f"  reuse_events_total:   {series.content_block_reuse_event_count_total}")
+    print(f"  events_over_56min:    {series.content_block_reuse_event_count_over_56min}")
     print(f"  requests_with_reuse:  {series.request_count_with_reuse}")
 
-    variant_label = "reusable" if event_def == "reusable" else "prefix-aware"
+    variant_label = "content_block_reuse" if event_def == "content_block_reuse" else "prefix-aware"
     reuse_pct = (
         series.request_count_with_reuse / series.single_turn_request_count * 100
         if series.single_turn_request_count > 0 else 0.0

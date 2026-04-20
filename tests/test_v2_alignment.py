@@ -349,11 +349,11 @@ def test_v2_v1_replay_integration_same_content_yields_prefix_hit() -> None:
     )
     results = list(replay(records))
     # r1: cold start
-    assert results[0].prefix_hit_blocks == 0, "First request must be cold start"
+    assert results[0].content_prefix_reuse_blocks == 0, "First request must be cold start"
     # r2: full prefix hit (identical content → identical blocks)
-    assert results[1].prefix_hit_blocks == results[1].total_blocks, (
+    assert results[1].content_prefix_reuse_blocks == results[1].total_blocks, (
         f"Identical content should produce full prefix hit: "
-        f"prefix_hit={results[1].prefix_hit_blocks}, total={results[1].total_blocks}"
+        f"prefix_hit={results[1].content_prefix_reuse_blocks}, total={results[1].total_blocks}"
     )
 
 
@@ -374,9 +374,9 @@ def test_v2_v1_replay_integration_different_content_partial_hit() -> None:
     results = list(replay(records))
     r2 = results[1]
     # The system prompt blocks are shared → at least some prefix hits
-    assert r2.prefix_hit_blocks > 0, "Shared prefix should produce at least one hit"
+    assert r2.content_prefix_reuse_blocks > 0, "Shared prefix should produce at least one hit"
     # But the user content differs → not a full hit
-    assert r2.prefix_hit_blocks < r2.total_blocks, "Different user content should not give full hit"
+    assert r2.content_prefix_reuse_blocks < r2.total_blocks, "Different user content should not give full hit"
 
 
 def test_v2_v1_compute_metrics_hit_rate_bounded() -> None:
@@ -390,8 +390,8 @@ def test_v2_v1_compute_metrics_hit_rate_bounded() -> None:
         raw, block_builder=_builder(fx.block_size)
     )
     summary = compute_metrics(list(replay(records)))
-    assert 0.0 <= summary.overall_prefix_hit_rate <= 1.0
-    assert 0.0 <= summary.overall_block_level_reusable_ratio <= 1.0
+    assert 0.0 <= summary.content_prefix_reuse_rate <= 1.0
+    assert 0.0 <= summary.content_block_reuse_ratio <= 1.0
 
 
 def test_v2_v1_metadata_preserved_in_record() -> None:

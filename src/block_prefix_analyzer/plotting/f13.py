@@ -121,7 +121,7 @@ def plot_f13(series: F13Series, path: Path, *, title: str = "", inset_title: str
         no_reuse_frac = max(0.0, 1.0 - left)
         if no_reuse_frac > 1e-4:
             no_reuse_label = (
-                "No prefix reuse" if series.event_definition == "prefix"
+                "No prefix reuse" if series.event_definition == "content_prefix_reuse"
                 else "Not reusable"
             )
             axins.barh(0, no_reuse_frac, left=left, color=_NO_REUSE_COLOR,
@@ -134,7 +134,7 @@ def plot_f13(series: F13Series, path: Path, *, title: str = "", inset_title: str
         axins.set_yticks([])
         if inset_title:
             pass  # caller-supplied title takes priority
-        elif series.event_definition == "prefix":
+        elif series.event_definition == "content_prefix_reuse":
             inset_title = "Requests with prefix reuse (%)"
         else:
             inset_title = "Requests that can be reused (%)"

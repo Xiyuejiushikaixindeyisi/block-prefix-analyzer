@@ -83,36 +83,36 @@ class TestC1_ThreeHitDefinitions:
     # ---- block-level prefix-aware ideal hit ratio ----
 
     def test_r1_cold_start_prefix_hit_zero(self):
-        assert self._results()[0].prefix_hit_blocks == 0
+        assert self._results()[0].content_prefix_reuse_blocks == 0
 
     def test_r2_prefix_hit_two(self):
-        assert self._results()[1].prefix_hit_blocks == 2
+        assert self._results()[1].content_prefix_reuse_blocks == 2
 
     def test_r3_prefix_hit_one(self):
         # [1, 3, 2]: 1 matches, but 3 ≠ 2 (second position in trie after r1, r2)
-        assert self._results()[2].prefix_hit_blocks == 1
+        assert self._results()[2].content_prefix_reuse_blocks == 1
 
     # ---- block-level reusable ratio ----
 
     def test_r1_cold_start_reusable_zero(self):
-        assert self._results()[0].reusable_block_count == 0
+        assert self._results()[0].content_reused_blocks_anywhere == 0
 
     def test_r2_reusable_two(self):
-        assert self._results()[1].reusable_block_count == 2
+        assert self._results()[1].content_reused_blocks_anywhere == 2
 
     def test_r3_reusable_three(self):
-        assert self._results()[2].reusable_block_count == 3
+        assert self._results()[2].content_reused_blocks_anywhere == 3
 
     # ---- token-level prefix hit ratio ----
 
     def test_r1_token_ratio_zero(self):
-        assert self._results()[0].token_level_prefix_hit_ratio == 0.0
+        assert self._results()[0].content_prefix_reuse_token_ratio == 0.0
 
     def test_r2_token_ratio_two_thirds(self):
-        assert abs(self._results()[1].token_level_prefix_hit_ratio - 2 / 3) < 1e-9
+        assert abs(self._results()[1].content_prefix_reuse_token_ratio - 2 / 3) < 1e-9
 
     def test_r3_token_ratio_one_third(self):
-        assert abs(self._results()[2].token_level_prefix_hit_ratio - 1 / 3) < 1e-9
+        assert abs(self._results()[2].content_prefix_reuse_token_ratio - 1 / 3) < 1e-9
 
 
 # ===========================================================================
@@ -220,23 +220,23 @@ class TestC3_V1NoRegression:
 
     def test_v1_cold_start_zero_hit(self):
         results = list(v1_replay(self._v1_records()))
-        assert results[0].prefix_hit_blocks == 0
-        assert results[0].reusable_block_count == 0
+        assert results[0].content_prefix_reuse_blocks == 0
+        assert results[0].content_reused_blocks_anywhere == 0
 
     def test_v1_second_request_prefix_two(self):
         results = list(v1_replay(self._v1_records()))
-        assert results[1].prefix_hit_blocks == 2
-        assert results[1].reusable_block_count == 2
+        assert results[1].content_prefix_reuse_blocks == 2
+        assert results[1].content_reused_blocks_anywhere == 2
 
     def test_v1_third_request_prefix_one(self):
         results = list(v1_replay(self._v1_records()))
-        assert results[2].prefix_hit_blocks == 1
-        assert results[2].reusable_block_count == 1
+        assert results[2].content_prefix_reuse_blocks == 1
+        assert results[2].content_reused_blocks_anywhere == 1
 
     def test_v1_all_miss_request(self):
         results = list(v1_replay(self._v1_records()))
-        assert results[3].prefix_hit_blocks == 0
-        assert results[3].reusable_block_count == 0
+        assert results[3].content_prefix_reuse_blocks == 0
+        assert results[3].content_reused_blocks_anywhere == 0
 
     def test_v1_replay_order_is_by_timestamp(self):
         shuffled = [
@@ -269,11 +269,11 @@ class TestC4_HandCraftedTrace:
 
     def test_prefix_hit_all_requests(self):
         rs = self._results()
-        assert [r.prefix_hit_blocks for r in rs] == [0, 2, 1]
+        assert [r.content_prefix_reuse_blocks for r in rs] == [0, 2, 1]
 
     def test_reusable_count_all_requests(self):
         rs = self._results()
-        assert [r.reusable_block_count for r in rs] == [0, 2, 3]
+        assert [r.content_reused_blocks_anywhere for r in rs] == [0, 2, 3]
 
     def test_reuse_time_r2_exactly_10(self):
         rs = self._results()
@@ -339,7 +339,7 @@ class TestC5_PathEquivalence:
         assert records[0].block_ids == FX.expected_block_ids
 
     def test_path_equivalence_prefix_hit(self):
-        """Both paths produce the same prefix_hit_blocks for a repeated request."""
+        """Both paths produce the same content_prefix_reuse_blocks for a repeated request."""
         v2_records = self._v2_records() * 2   # repeat: second should be full hit
         # Re-assign arrival indices and timestamps to avoid duplicates
         v2_records[0] = RequestRecord("r1", 0.0, 0, v2_records[0].block_ids)
@@ -355,7 +355,7 @@ class TestC5_PathEquivalence:
         v2_results = list(v1_replay(v2_records))
         hand_results = list(v1_replay(hand_records_repeat))
 
-        assert v2_results[1].prefix_hit_blocks == hand_results[1].prefix_hit_blocks
+        assert v2_results[1].content_prefix_reuse_blocks == hand_results[1].content_prefix_reuse_blocks
 
     def test_v2_pipeline_block_size_stored(self):
         records = self._v2_records()

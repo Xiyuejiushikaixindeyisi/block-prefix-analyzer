@@ -85,11 +85,11 @@ class ForwardReuseRecord:
         Delay to first_reused_by_request_id (seconds).  None if not reusable.
     num_future_reusers:
         Count of distinct future root requests that reuse at least one block.
-    reused_block_count:
+    content_reused_block_count:
         Number of distinct blocks from this request that appear in any
         future root request.
-    reused_block_approx_tokens:
-        Approximate token count of reused blocks (reused_block_count * block_size).
+    content_reused_block_approx_tokens:
+        Approximate token count of reused blocks (content_reused_block_count * block_size).
         The last block of the source request may be partial, so this is an
         upper bound on the true reused token count.
     """
@@ -102,8 +102,8 @@ class ForwardReuseRecord:
     first_reused_by_request_id: Optional[str]
     first_future_reuse_delay_seconds: Optional[float]
     num_future_reusers: int
-    reused_block_count: int
-    reused_block_approx_tokens: int
+    content_reused_block_count: int
+    content_reused_block_approx_tokens: int
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ def compute_forward_inset(
     type_label_mapping:
         Override type → display_label mapping.
     block_size:
-        Tokens per block (used for reused_block_approx_tokens approximation).
+        Tokens per block (used for content_reused_block_approx_tokens approximation).
 
     Returns
     -------
@@ -190,8 +190,8 @@ def compute_forward_inset(
             first_reused_by_request_id=first_reuser,
             first_future_reuse_delay_seconds=first_delay,
             num_future_reusers=len(future_reusers),
-            reused_block_count=len(reused_blocks),
-            reused_block_approx_tokens=len(reused_blocks) * block_size,
+            content_reused_block_count=len(reused_blocks),
+            content_reused_block_approx_tokens=len(reused_blocks) * block_size,
         ))
 
     return result
@@ -253,7 +253,7 @@ def save_forward_inset_csv(
         "request_id", "timestamp", "request_type", "display_label",
         "is_root_request", "is_reusable_by_future_root",
         "first_reused_by_request_id", "first_future_reuse_delay_seconds",
-        "num_future_reusers", "reused_block_count", "reused_block_approx_tokens",
+        "num_future_reusers", "content_reused_block_count", "content_reused_block_approx_tokens",
     ]
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
@@ -272,6 +272,6 @@ def save_forward_inset_csv(
                     else rec.first_future_reuse_delay_seconds
                 ),
                 "num_future_reusers": rec.num_future_reusers,
-                "reused_block_count": rec.reused_block_count,
-                "reused_block_approx_tokens": rec.reused_block_approx_tokens,
+                "content_reused_block_count": rec.content_reused_block_count,
+                "content_reused_block_approx_tokens": rec.content_reused_block_approx_tokens,
             })

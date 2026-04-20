@@ -55,7 +55,7 @@ class RequestAlignmentStats:
     arrival_index: int
     request_type: str
     total_blocks: int
-    prefix_hit_blocks: int
+    content_prefix_reuse_blocks: int
     reusable_blocks_anywhere: int
     has_nonprefix_hit: bool
     first_miss_pos: Optional[int]
@@ -98,24 +98,24 @@ class AlignmentResult:
         return sum(r.reusable_blocks_anywhere for r in self.per_request)
 
     @property
-    def total_prefix_hit_blocks(self) -> int:
-        return sum(r.prefix_hit_blocks for r in self.per_request)
+    def total_content_prefix_reuse_blocks(self) -> int:
+        return sum(r.content_prefix_reuse_blocks for r in self.per_request)
 
     @property
-    def total_nonprefix_hit_blocks(self) -> int:
-        return self.total_hit_blocks - self.total_prefix_hit_blocks
+    def total_noncontent_prefix_reuse_blocks(self) -> int:
+        return self.total_hit_blocks - self.total_content_prefix_reuse_blocks
 
     @property
     def requests_where_anywhere_gt_prefix(self) -> int:
         return sum(
             1 for r in self.per_request
-            if r.reusable_blocks_anywhere > r.prefix_hit_blocks
+            if r.reusable_blocks_anywhere > r.content_prefix_reuse_blocks
         )
 
     @property
     def sum_anywhere_minus_prefix(self) -> int:
         return sum(
-            r.reusable_blocks_anywhere - r.prefix_hit_blocks
+            r.reusable_blocks_anywhere - r.content_prefix_reuse_blocks
             for r in self.per_request
         )
 
@@ -129,12 +129,12 @@ def _analyze_hit_mask(block_ids: list[int], pool: set[int]) -> RequestAlignmentS
     n = len(block_ids)
     hit_mask = [1 if bid in pool else 0 for bid in block_ids]
 
-    # prefix_hit_blocks: contiguous hits from position 0
-    prefix_hit_blocks = 0
+    # content_prefix_reuse_blocks: contiguous hits from position 0
+    content_prefix_reuse_blocks = 0
     first_miss_pos: Optional[int] = None
     for i, h in enumerate(hit_mask):
         if h == 1:
-            prefix_hit_blocks += 1
+            content_prefix_reuse_blocks += 1
         else:
             first_miss_pos = i
             break
@@ -153,7 +153,7 @@ def _analyze_hit_mask(block_ids: list[int], pool: set[int]) -> RequestAlignmentS
         arrival_index=0,        # filled by caller
         request_type="",        # filled by caller
         total_blocks=n,
-        prefix_hit_blocks=prefix_hit_blocks,
+        content_prefix_reuse_blocks=content_prefix_reuse_blocks,
         reusable_blocks_anywhere=sum(hit_mask),
         has_nonprefix_hit=(first_nonprefix_hit_pos is not None),
         first_miss_pos=first_miss_pos,
@@ -246,14 +246,14 @@ def save_violation_samples(result: AlignmentResult, path: Path, limit: int = 100
         w = csv.writer(f)
         w.writerow([
             "request_id", "timestamp", "arrival_index", "request_type",
-            "total_blocks", "prefix_hit_blocks", "reusable_blocks_anywhere",
+            "total_blocks", "content_prefix_reuse_blocks", "reusable_blocks_anywhere",
             "first_miss_pos", "first_nonprefix_hit_pos",
             "hit_mask_str",
         ])
         for r in violations[:limit]:
             w.writerow([
                 r.request_id, r.timestamp, r.arrival_index, r.request_type,
-                r.total_blocks, r.prefix_hit_blocks, r.reusable_blocks_anywhere,
+                r.total_blocks, r.content_prefix_reuse_blocks, r.reusable_blocks_anywhere,
                 r.first_miss_pos, r.first_nonprefix_hit_pos,
                 "".join(map(str, r.hit_mask)),
             ])
@@ -270,10 +270,10 @@ def _result_to_dict(result: AlignmentResult) -> dict:
         "nonprefix_hit_rate_among_hit_requests": round(result.nonprefix_hit_rate_among_hit, 6),
         "total_blocks": result.total_blocks,
         "total_hit_blocks": result.total_hit_blocks,
-        "total_prefix_hit_blocks": result.total_prefix_hit_blocks,
-        "total_nonprefix_hit_blocks": result.total_nonprefix_hit_blocks,
+        "total_content_prefix_reuse_blocks": result.total_content_prefix_reuse_blocks,
+        "total_noncontent_prefix_reuse_blocks": result.total_noncontent_prefix_reuse_blocks,
         "nonprefix_hit_block_fraction": round(
-            result.total_nonprefix_hit_blocks / result.total_hit_blocks
+            result.total_noncontent_prefix_reuse_blocks / result.total_hit_blocks
             if result.total_hit_blocks else 0.0, 6
         ),
         "num_requests_where_anywhere_gt_prefix": result.requests_where_anywhere_gt_prefix,
@@ -353,14 +353,14 @@ def save_summary_markdown(
         f"| nonprefix_hit_rate (hit reqs only) | {m['nonprefix_hit_rate_among_hit_requests']:.4%} | {a['nonprefix_hit_rate_among_hit_requests']:.4%} | {b['nonprefix_hit_rate_among_hit_requests']:.4%} |",
         f"| total_blocks | {m['total_blocks']:,} | {a['total_blocks']:,} | {b['total_blocks']:,} |",
         f"| total_hit_blocks | {m['total_hit_blocks']:,} | {a['total_hit_blocks']:,} | {b['total_hit_blocks']:,} |",
-        f"| total_prefix_hit_blocks | {m['total_prefix_hit_blocks']:,} | {a['total_prefix_hit_blocks']:,} | {b['total_prefix_hit_blocks']:,} |",
-        f"| **total_nonprefix_hit_blocks** | **{m['total_nonprefix_hit_blocks']:,}** | **{a['total_nonprefix_hit_blocks']:,}** | **{b['total_nonprefix_hit_blocks']:,}** |",
+        f"| total_content_prefix_reuse_blocks | {m['total_content_prefix_reuse_blocks']:,} | {a['total_content_prefix_reuse_blocks']:,} | {b['total_content_prefix_reuse_blocks']:,} |",
+        f"| **total_noncontent_prefix_reuse_blocks** | **{m['total_noncontent_prefix_reuse_blocks']:,}** | **{a['total_noncontent_prefix_reuse_blocks']:,}** | **{b['total_noncontent_prefix_reuse_blocks']:,}** |",
         f"| nonprefix_hit_block_fraction | {m['nonprefix_hit_block_fraction']:.4%} | {a['nonprefix_hit_block_fraction']:.4%} | {b['nonprefix_hit_block_fraction']:.4%} |",
         "",
         "## 4. Anywhere vs Prefix Comparison",
         "",
         "If block_hash_ids are chain prefix-aware, `reusable_blocks_anywhere` must equal",
-        "`prefix_hit_blocks` for every request (non-prefix hits are physically impossible).",
+        "`content_prefix_reuse_blocks` for every request (non-prefix hits are physically impossible).",
         "",
         f"- requests where `anywhere > prefix`: **{m['num_requests_where_anywhere_gt_prefix']:,}**"
         f" ({m['fraction_requests_where_anywhere_gt_prefix']:.4%})",
@@ -411,7 +411,7 @@ def save_summary_markdown(
         "",
         "- The parent diversity test above is the most direct falsification: if any hot block",
         "  has >1 unique parent, chain hash is definitively ruled out for this dataset.",
-        "- If content hash confirmed: `prefix_hit_blocks` metric as computed here does NOT",
+        "- If content hash confirmed: `content_prefix_reuse_blocks` metric as computed here does NOT",
         "  correspond to vLLM prefix cache behavior. vLLM sees prefix contiguity differently.",
         "- Consider re-labelling the dataset metric as 'content-block reuse' (not 'prefix hit').",
         "- To properly simulate vLLM prefix cache hits, we would need to reconstruct prefix",
@@ -438,7 +438,7 @@ def main() -> None:
     m = _result_to_dict(main_result)
     print(f"  requests_with_nonprefix_hit: {m['requests_with_nonprefix_hit']:,}"
           f" ({m['nonprefix_hit_rate_among_all_requests']:.4%} of all)")
-    print(f"  total_nonprefix_hit_blocks:  {m['total_nonprefix_hit_blocks']:,}"
+    print(f"  total_noncontent_prefix_reuse_blocks:  {m['total_noncontent_prefix_reuse_blocks']:,}"
           f" ({m['nonprefix_hit_block_fraction']:.4%} of hit blocks)")
     print(f"  requests where anywhere > prefix: {m['num_requests_where_anywhere_gt_prefix']:,}")
 
@@ -448,7 +448,7 @@ def main() -> None:
     a = _result_to_dict(ctrl_a)
     print(f"  requests_with_nonprefix_hit: {a['requests_with_nonprefix_hit']:,}"
           f" ({a['nonprefix_hit_rate_among_all_requests']:.4%} of all)")
-    print(f"  total_nonprefix_hit_blocks:  {a['total_nonprefix_hit_blocks']:,}"
+    print(f"  total_noncontent_prefix_reuse_blocks:  {a['total_noncontent_prefix_reuse_blocks']:,}"
           f" ({a['nonprefix_hit_block_fraction']:.4%} of hit blocks)")
 
     # --- Control B: global pool (no self) ---
@@ -457,7 +457,7 @@ def main() -> None:
     b = _result_to_dict(ctrl_b)
     print(f"  requests_with_nonprefix_hit: {b['requests_with_nonprefix_hit']:,}"
           f" ({b['nonprefix_hit_rate_among_all_requests']:.4%} of all)")
-    print(f"  total_nonprefix_hit_blocks:  {b['total_nonprefix_hit_blocks']:,}"
+    print(f"  total_noncontent_prefix_reuse_blocks:  {b['total_noncontent_prefix_reuse_blocks']:,}"
           f" ({b['nonprefix_hit_block_fraction']:.4%} of hit blocks)")
 
     # --- Parent diversity test ---

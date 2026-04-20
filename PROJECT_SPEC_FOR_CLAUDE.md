@@ -376,7 +376,7 @@ It should **not** attempt to finish the analyzer in one shot.
   from the public TraceA dataset (43,058 records, block_size=16).
 - **V2-min pipeline** — `normalize → render → tokenize → block build → V1 record`;
   internal consistency verified (87 tests); SHA-256 placeholder hash.
-- **V2-full metrics** — `token_level_prefix_hit_ratio`, `mean_reuse_time`,
+- **V2-full metrics** — `content_prefix_reuse_token_ratio`, `mean_reuse_time`,
   `lifespan` (`compute_block_lifespans`), session/category helpers.
 - **V2 readiness gate** — `QwenChatTemplate` (Layer 1 VERIFIED), xfail
   guards for Layer 2–3, readiness checklist C1–C6 tested (421 total tests).

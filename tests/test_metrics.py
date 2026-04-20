@@ -15,7 +15,7 @@ Coverage matrix
 7.  cold_start_request_count — includes empty-block and prefix-miss requests.
 8.  ratio = numerator / denominator consistency check.
 9.  Semantic divergence: reusable_count > prefix_hit when non-contiguous.
-10. Duplicate block ids counted per-position in reusable_block_count.
+10. Duplicate block ids counted per-position in content_reused_blocks_anywhere.
 11. All-zero denominator (all empty block_ids) → ratios 0.0 without ZeroDivisionError.
 12. MetricsSummary is frozen (immutable).
 13. Integration: end-to-end replay → compute_metrics round-trip.
@@ -38,16 +38,16 @@ def _row(
     timestamp: float = 0.0,
     arrival_index: int = 0,
     total_blocks: int = 0,
-    prefix_hit_blocks: int = 0,
-    reusable_block_count: int = 0,
+    content_prefix_reuse_blocks: int = 0,
+    content_reused_blocks_anywhere: int = 0,
 ) -> PerRequestResult:
     return PerRequestResult(
         request_id=request_id,
         timestamp=timestamp,
         arrival_index=arrival_index,
         total_blocks=total_blocks,
-        prefix_hit_blocks=prefix_hit_blocks,
-        reusable_block_count=reusable_block_count,
+        content_prefix_reuse_blocks=content_prefix_reuse_blocks,
+        content_reused_blocks_anywhere=content_reused_blocks_anywhere,
     )
 
 
@@ -75,10 +75,10 @@ def test_empty_input_all_zeros() -> None:
     assert m.non_empty_request_count == 0
     assert m.cold_start_request_count == 0
     assert m.total_blocks == 0
-    assert m.total_prefix_hit_blocks == 0
-    assert m.total_reusable_blocks == 0
-    assert m.overall_prefix_hit_rate == 0.0
-    assert m.overall_block_level_reusable_ratio == 0.0
+    assert m.total_content_prefix_reuse_blocks == 0
+    assert m.total_content_reused_blocks_anywhere == 0
+    assert m.content_prefix_reuse_rate == 0.0
+    assert m.content_block_reuse_ratio == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -86,17 +86,17 @@ def test_empty_input_all_zeros() -> None:
 # ---------------------------------------------------------------------------
 
 def test_single_cold_start_request() -> None:
-    rows = [_row("r1", total_blocks=4, prefix_hit_blocks=0, reusable_block_count=0)]
+    rows = [_row("r1", total_blocks=4, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=0)]
     m = compute_metrics(rows)
 
     assert m.request_count == 1
     assert m.non_empty_request_count == 1
     assert m.cold_start_request_count == 1
     assert m.total_blocks == 4
-    assert m.total_prefix_hit_blocks == 0
-    assert m.total_reusable_blocks == 0
-    assert m.overall_prefix_hit_rate == 0.0
-    assert m.overall_block_level_reusable_ratio == 0.0
+    assert m.total_content_prefix_reuse_blocks == 0
+    assert m.total_content_reused_blocks_anywhere == 0
+    assert m.content_prefix_reuse_rate == 0.0
+    assert m.content_block_reuse_ratio == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -107,27 +107,27 @@ def test_prefix_hit_rate_two_requests() -> None:
     # r1: 3 blocks, 0 hits (cold start)
     # r2: 3 blocks, 3 hits (full prefix match)
     rows = [
-        _row("r1", total_blocks=3, prefix_hit_blocks=0, reusable_block_count=0),
-        _row("r2", total_blocks=3, prefix_hit_blocks=3, reusable_block_count=3),
+        _row("r1", total_blocks=3, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=0),
+        _row("r2", total_blocks=3, content_prefix_reuse_blocks=3, content_reused_blocks_anywhere=3),
     ]
     m = compute_metrics(rows)
 
     assert m.total_blocks == 6
-    assert m.total_prefix_hit_blocks == 3
-    assert abs(m.overall_prefix_hit_rate - 3 / 6) < 1e-12
+    assert m.total_content_prefix_reuse_blocks == 3
+    assert abs(m.content_prefix_reuse_rate - 3 / 6) < 1e-12
 
 
 def test_prefix_hit_rate_partial_match() -> None:
     # r1: 4 blocks, 0 hits
     # r2: 4 blocks, 2 hits (fork at position 2)
     rows = [
-        _row("r1", total_blocks=4, prefix_hit_blocks=0, reusable_block_count=0),
-        _row("r2", total_blocks=4, prefix_hit_blocks=2, reusable_block_count=2),
+        _row("r1", total_blocks=4, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=0),
+        _row("r2", total_blocks=4, content_prefix_reuse_blocks=2, content_reused_blocks_anywhere=2),
     ]
     m = compute_metrics(rows)
 
-    assert m.total_prefix_hit_blocks == 2
-    assert abs(m.overall_prefix_hit_rate - 2 / 8) < 1e-12
+    assert m.total_content_prefix_reuse_blocks == 2
+    assert abs(m.content_prefix_reuse_rate - 2 / 8) < 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -136,24 +136,24 @@ def test_prefix_hit_rate_partial_match() -> None:
 
 def test_reusable_ratio_all_seen() -> None:
     rows = [
-        _row("r1", total_blocks=3, prefix_hit_blocks=0, reusable_block_count=0),
-        _row("r2", total_blocks=3, prefix_hit_blocks=3, reusable_block_count=3),
-        _row("r3", total_blocks=3, prefix_hit_blocks=3, reusable_block_count=3),
+        _row("r1", total_blocks=3, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=0),
+        _row("r2", total_blocks=3, content_prefix_reuse_blocks=3, content_reused_blocks_anywhere=3),
+        _row("r3", total_blocks=3, content_prefix_reuse_blocks=3, content_reused_blocks_anywhere=3),
     ]
     m = compute_metrics(rows)
-    assert m.total_reusable_blocks == 6
-    assert abs(m.overall_block_level_reusable_ratio - 6 / 9) < 1e-12
+    assert m.total_content_reused_blocks_anywhere == 6
+    assert abs(m.content_block_reuse_ratio - 6 / 9) < 1e-12
 
 
 def test_reusable_ratio_partial() -> None:
     # r2 has 2 reusable positions out of 4 total
     rows = [
-        _row("r1", total_blocks=4, prefix_hit_blocks=0, reusable_block_count=0),
-        _row("r2", total_blocks=4, prefix_hit_blocks=0, reusable_block_count=2),
+        _row("r1", total_blocks=4, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=0),
+        _row("r2", total_blocks=4, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=2),
     ]
     m = compute_metrics(rows)
-    assert m.total_reusable_blocks == 2
-    assert abs(m.overall_block_level_reusable_ratio - 2 / 8) < 1e-12
+    assert m.total_content_reused_blocks_anywhere == 2
+    assert abs(m.content_block_reuse_ratio - 2 / 8) < 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -162,15 +162,15 @@ def test_reusable_ratio_partial() -> None:
 
 def test_empty_block_ids_excluded_from_denominator() -> None:
     rows = [
-        _row("empty", total_blocks=0, prefix_hit_blocks=0, reusable_block_count=0),
-        _row("r2",    total_blocks=4, prefix_hit_blocks=2, reusable_block_count=2),
+        _row("empty", total_blocks=0, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=0),
+        _row("r2",    total_blocks=4, content_prefix_reuse_blocks=2, content_reused_blocks_anywhere=2),
     ]
     m = compute_metrics(rows)
 
     # Denominator = 4 (from r2 only), not 4+0=4 either way, but let's confirm
     assert m.total_blocks == 4
     assert m.non_empty_request_count == 1
-    assert abs(m.overall_prefix_hit_rate - 2 / 4) < 1e-12
+    assert abs(m.content_prefix_reuse_rate - 2 / 4) < 1e-12
 
 
 def test_only_empty_block_ids_requests_denominator_is_zero() -> None:
@@ -180,8 +180,8 @@ def test_only_empty_block_ids_requests_denominator_is_zero() -> None:
     ]
     m = compute_metrics(rows)
     assert m.total_blocks == 0
-    assert m.overall_prefix_hit_rate == 0.0
-    assert m.overall_block_level_reusable_ratio == 0.0
+    assert m.content_prefix_reuse_rate == 0.0
+    assert m.content_block_reuse_ratio == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -205,9 +205,9 @@ def test_request_count_includes_empty_block_ids() -> None:
 
 def test_cold_start_includes_first_and_prefix_miss() -> None:
     rows = [
-        _row("r1", total_blocks=3, prefix_hit_blocks=0),  # cold start (first)
-        _row("r2", total_blocks=3, prefix_hit_blocks=2),  # partial hit
-        _row("r3", total_blocks=3, prefix_hit_blocks=0),  # cold start (miss)
+        _row("r1", total_blocks=3, content_prefix_reuse_blocks=0),  # cold start (first)
+        _row("r2", total_blocks=3, content_prefix_reuse_blocks=2),  # partial hit
+        _row("r3", total_blocks=3, content_prefix_reuse_blocks=0),  # cold start (miss)
     ]
     m = compute_metrics(rows)
     assert m.cold_start_request_count == 2
@@ -216,8 +216,8 @@ def test_cold_start_includes_first_and_prefix_miss() -> None:
 def test_cold_start_includes_empty_block_ids() -> None:
     # An empty-block request has prefix_hit == 0 and counts as cold start
     rows = [
-        _row("empty", total_blocks=0, prefix_hit_blocks=0),
-        _row("r2",    total_blocks=3, prefix_hit_blocks=3),
+        _row("empty", total_blocks=0, content_prefix_reuse_blocks=0),
+        _row("r2",    total_blocks=3, content_prefix_reuse_blocks=3),
     ]
     m = compute_metrics(rows)
     assert m.cold_start_request_count == 1  # only the empty one
@@ -229,15 +229,15 @@ def test_cold_start_includes_empty_block_ids() -> None:
 
 def test_ratio_matches_manual_calculation() -> None:
     rows = [
-        _row("r1", total_blocks=5, prefix_hit_blocks=0, reusable_block_count=0),
-        _row("r2", total_blocks=5, prefix_hit_blocks=4, reusable_block_count=5),
-        _row("r3", total_blocks=5, prefix_hit_blocks=3, reusable_block_count=4),
+        _row("r1", total_blocks=5, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=0),
+        _row("r2", total_blocks=5, content_prefix_reuse_blocks=4, content_reused_blocks_anywhere=5),
+        _row("r3", total_blocks=5, content_prefix_reuse_blocks=3, content_reused_blocks_anywhere=4),
     ]
     m = compute_metrics(rows)
 
     denom = 15
-    assert abs(m.overall_prefix_hit_rate - 7 / denom) < 1e-12
-    assert abs(m.overall_block_level_reusable_ratio - 9 / denom) < 1e-12
+    assert abs(m.content_prefix_reuse_rate - 7 / denom) < 1e-12
+    assert abs(m.content_block_reuse_ratio - 9 / denom) < 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -246,17 +246,17 @@ def test_ratio_matches_manual_calculation() -> None:
 
 def test_reusable_can_exceed_prefix_hit_non_contiguous() -> None:
     # r2 starts with an unseen block (no prefix hit) but later blocks are
-    # seen → reusable_block_count > prefix_hit_blocks
+    # seen → content_reused_blocks_anywhere > content_prefix_reuse_blocks
     rows = [
-        _row("r1", total_blocks=3, prefix_hit_blocks=0, reusable_block_count=0),
+        _row("r1", total_blocks=3, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=0),
         # prefix_hit=0 (first block unseen), reusable=2 (blocks at pos 1,2 seen)
-        _row("r2", total_blocks=3, prefix_hit_blocks=0, reusable_block_count=2),
+        _row("r2", total_blocks=3, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=2),
     ]
     m = compute_metrics(rows)
-    assert m.total_prefix_hit_blocks == 0
-    assert m.total_reusable_blocks == 2
-    assert m.overall_prefix_hit_rate == 0.0
-    assert m.overall_block_level_reusable_ratio > 0.0
+    assert m.total_content_prefix_reuse_blocks == 0
+    assert m.total_content_reused_blocks_anywhere == 2
+    assert m.content_prefix_reuse_rate == 0.0
+    assert m.content_block_reuse_ratio > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -265,14 +265,14 @@ def test_reusable_can_exceed_prefix_hit_non_contiguous() -> None:
 
 def test_duplicate_blocks_counted_per_position() -> None:
     # The spec example: history has A; current [A, A, B]
-    # → reusable_block_count == 2 (not 1, not 3)
+    # → content_reused_blocks_anywhere == 2 (not 1, not 3)
     rows = [
-        _row("r1", total_blocks=1, prefix_hit_blocks=0, reusable_block_count=0),
-        _row("r2", total_blocks=3, prefix_hit_blocks=1, reusable_block_count=2),
+        _row("r1", total_blocks=1, content_prefix_reuse_blocks=0, content_reused_blocks_anywhere=0),
+        _row("r2", total_blocks=3, content_prefix_reuse_blocks=1, content_reused_blocks_anywhere=2),
     ]
     m = compute_metrics(rows)
-    assert m.total_reusable_blocks == 2
-    assert abs(m.overall_block_level_reusable_ratio - 2 / 4) < 1e-12
+    assert m.total_content_reused_blocks_anywhere == 2
+    assert abs(m.content_block_reuse_ratio - 2 / 4) < 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -314,12 +314,12 @@ def test_integration_replay_then_compute_metrics() -> None:
     assert m.non_empty_request_count == 3
 
     # prefix hits: r1=0, r2=3, r3=2 → total=5
-    assert m.total_prefix_hit_blocks == 5
-    assert abs(m.overall_prefix_hit_rate - 5 / 9) < 1e-12
+    assert m.total_content_prefix_reuse_blocks == 5
+    assert abs(m.content_prefix_reuse_rate - 5 / 9) < 1e-12
 
     # reusable: r1=0, r2=3 (all seen), r3=2 ([1,2] seen; [9] not) → total=5
-    assert m.total_reusable_blocks == 5
-    assert abs(m.overall_block_level_reusable_ratio - 5 / 9) < 1e-12
+    assert m.total_content_reused_blocks_anywhere == 5
+    assert abs(m.content_block_reuse_ratio - 5 / 9) < 1e-12
 
     # cold starts: r1 (prefix=0), r3 would have prefix=2 so not cold,
     # empty (prefix=0) → 2 cold starts
@@ -339,8 +339,8 @@ def test_integration_single_record_chain() -> None:
     # total_blocks = 0 + 2 + 3 = 5
     assert m.total_blocks == 5
     # prefix: empty=0, a=0(cold), b=2([10,20] from a) → 2
-    assert m.total_prefix_hit_blocks == 2
+    assert m.total_content_prefix_reuse_blocks == 2
     # reusable: empty=0, a=0, b=2([10,20] seen; 30 not) → 2
-    assert m.total_reusable_blocks == 2
+    assert m.total_content_reused_blocks_anywhere == 2
     assert m.request_count == 3
     assert m.non_empty_request_count == 2
