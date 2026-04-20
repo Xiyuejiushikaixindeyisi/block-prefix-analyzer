@@ -233,13 +233,20 @@ class TestArea5_WithinRequestDedup:
 
 
 # ===========================================================================
-# Area 6: inset uses single-turn-only pool (backward-looking)
+# Area 6: inset uses FORWARD-LOOKING definition (reusable by future root)
+#
+# Base fixture forward-reusable analysis:
+#   r1 (t=0, blocks={1,2,3}): future roots r3 (block 1 overlap) → REUSABLE
+#   r3 (t=20, blocks={1,5,6}): future roots r5 (block 1 overlap) → REUSABLE
+#   r4 (t=30, blocks={7,8,9}): future roots r5 (no overlap)      → NOT reusable
+#   r5 (t=40, blocks={1,2,4,10}): no future root                 → NOT reusable
+# Forward-reusable set = {r1, r3}, count = 2, not-reusable = {r4, r5}, count = 2
 # ===========================================================================
 
-class TestArea6_InsetSingleTurnPool:
-    def test_inset_counts_only_requests_with_reuse(self, base_records):
+class TestArea6_InsetForwardLooking:
+    def test_inset_uses_forward_reusable_count(self, base_records):
         series = compute_f13_strict_series(base_records)
-        # r1 and r4 have no reuse events; r3 and r5 do
+        # Forward-reusable: r1 and r3 (count=2); NOT r3 and r5 (backward)
         assert series.request_count_with_reuse == 2
         assert series.request_count_without_reuse == 2
 
@@ -256,7 +263,7 @@ class TestArea6_InsetSingleTurnPool:
 
     def test_pool_definition_tags(self):
         assert "single_turn" in POOL_DEFINITION_CDF
-        assert "single_turn" in POOL_DEFINITION_BREAKDOWN
+        assert "forward_looking" in POOL_DEFINITION_BREAKDOWN
 
 
 # ===========================================================================
@@ -266,14 +273,15 @@ class TestArea6_InsetSingleTurnPool:
 class TestArea7_FollowUpsExcludedFromPool:
     def test_block_from_followup_not_counted_as_reusable(self):
         # r1: root, blocks=[1, 2]
-        # r2: follow-up, blocks=[3, 4]  ← block 3 from follow-up
-        # r3: root, blocks=[3, 5]       ← block 3 should NOT be reusable (came from r2)
+        # r2: follow-up, blocks=[3, 4]  ← block 3 only from follow-up
+        # r3: root, blocks=[3, 5]       ← block 3 should NOT generate CDF event (r2 not in pool)
         r1 = _rec(1, 0,  [1, 2], parent_chat_id=-1)
         r2 = _rec(2, 10, [3, 4], parent_chat_id=1)   # follow-up
         r3 = _rec(3, 20, [3, 5], parent_chat_id=-1)  # root
         series = compute_f13_strict_series([r1, r2, r3])
-        # block 3 only appeared in r2 (follow-up), which doesn't update pool
+        # CDF: block 3 only appeared in r2 (follow-up), which doesn't update pool → 0 events
         assert series.reuse_event_count_total == 0
+        # Forward inset: r1 blocks={1,2} vs r3 blocks={3,5} → no overlap → 0 forward-reusable
         assert series.request_count_with_reuse == 0
 
     def test_followup_block_isolated_from_pool(self, base_records):

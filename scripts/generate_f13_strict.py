@@ -4,10 +4,12 @@
 Usage:
     python scripts/generate_f13_strict.py configs/paper_repro/f13_traceA_public_strict.yaml
 
-Differences from generate_f13.py:
-  - single-turn = root requests (parent_chat_id == -1), NOT single-round sessions
-  - block pool restricted to single-turn requests only (multi-turn excluded)
-  - inset = request-level reusable fraction within single-turn pool
+Inset direction: FORWARD-LOOKING
+  "Is this root request's content reused by a future root request?"
+  (NOT backward-looking any-hit)
+
+The backward any-hit ratio is printed as a diagnostic and stored in metadata,
+but it is NOT used for the inset plot.
 """
 from __future__ import annotations
 
@@ -18,11 +20,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from block_prefix_analyzer.analysis.f13_strict import (
-    compute_f13_strict_series,
+    compute_f13_strict,
     save_strict_breakdown_csv,
     save_strict_cdf_csv,
     save_strict_metadata_json,
 )
+from block_prefix_analyzer.analysis.f13_forward_inset import save_forward_inset_csv
 from block_prefix_analyzer.io.traceA_loader import load_traceA_jsonl
 from block_prefix_analyzer.plotting.f13 import plot_f13
 
@@ -55,28 +58,42 @@ def run(config: dict[str, str], project_root: Path) -> None:
     records = load_traceA_jsonl(input_path)
     print(f"  {len(records)} records loaded")
 
-    print("Computing F13 strict series ...")
-    series = compute_f13_strict_series(records, x_axis_max_minutes=x_axis_max)
+    print("Computing F13 strict series (forward inset + backward diagnostic) ...")
+    output = compute_f13_strict(records, x_axis_max_minutes=x_axis_max)
+    series = output.series
+    total = series.single_turn_request_count
 
-    reuse_pct = (
-        series.request_count_with_reuse / series.single_turn_request_count * 100
-        if series.single_turn_request_count > 0 else 0.0
-    )
-    print(f"  single_turn_requests (root):  {series.single_turn_request_count}")
-    print(f"  reusable_requests (inset):    {series.request_count_with_reuse} ({reuse_pct:.1f}%)")
-    print(f"  not_reusable_requests:        {series.request_count_without_reuse}")
-    print(f"  reuse_events_total:           {series.reuse_event_count_total}")
-    print(f"  events_over_56min:            {series.reuse_event_count_over_56min}")
+    # --- Forward-looking inset (main) ---
+    fwd_count = series.request_count_with_reuse
+    fwd_pct = fwd_count / total * 100 if total > 0 else 0.0
+
+    # --- Backward-looking diagnostic ---
+    bwd_count = output.backward_reusable_count
+    bwd_pct = bwd_count / total * 100 if total > 0 else 0.0
+
+    print()
+    print(f"  single_turn_requests (root):        {total}")
+    print(f"  reuse_events_total (CDF):           {series.reuse_event_count_total}")
+    print(f"  events_over_56min:                  {series.reuse_event_count_over_56min}")
+    print()
+    print(f"  [INSET — FORWARD-LOOKING]")
+    print(f"  reusable_by_future_root:            {fwd_count} ({fwd_pct:.1f}%)")
+    print(f"  not_reusable_by_any_future_root:    {series.request_count_without_reuse}")
+    print()
+    print(f"  [DIAGNOSTIC — BACKWARD-LOOKING any-hit]")
+    print(f"  backward_any_hit_count:             {bwd_count} ({bwd_pct:.1f}%)")
+    print(f"  (This is NOT the inset value — stored in metadata only)")
 
     title = (
         f"(Trace A / public) F13 reuse-time CDF — strict root-request definition "
-        f"| single-turn (root): {series.single_turn_request_count} "
-        f"| reusable: {reuse_pct:.1f}%"
+        f"| root: {total} "
+        f"| forward-reusable: {fwd_pct:.1f}%"
     )
-    inset_title = "Root requests reusable within root-only pool (%)"
+    inset_title = "Root requests reusable by future root (%)"
 
     save_strict_cdf_csv(series, output_dir / "cdf_series.csv")
     save_strict_breakdown_csv(series, output_dir / "request_breakdown.csv")
+    save_forward_inset_csv(output.forward_records, output_dir / "forward_inset_per_request.csv")
     save_strict_metadata_json(
         series,
         output_dir / "metadata.json",
@@ -84,10 +101,11 @@ def run(config: dict[str, str], project_root: Path) -> None:
         input_file=config["input_file"],
         note_public_adaptation=note,
         figure_variant=figure_variant,
+        backward_reusable_count=bwd_count,
     )
     plot_f13(series, output_dir / "plot.png", title=title, inset_title=inset_title)
 
-    print(f"Output written to: {output_dir}")
+    print(f"\nOutput written to: {output_dir}")
 
 
 def main() -> None:
