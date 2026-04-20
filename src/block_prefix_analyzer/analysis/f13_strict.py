@@ -3,8 +3,11 @@
 Key differences from f13.py
 -----------------------------
 single_turn_definition
-    Root requests: parent_chat_id == -1 (or field absent).
-    Includes multi-turn session roots; NOT restricted to single-round sessions.
+    Sessions that consist of exactly one request (no follow-ups).
+    Identified via parent_chat_id chain reconstruction: a request is
+    single-turn iff its session has length == 1.
+    Multi-turn session roots (parent_chat_id == -1 but with children) are
+    EXCLUDED — they belong to multi-turn sessions.
 
 CDF pool
     Block pool is updated ONLY by single-turn (root) requests.
@@ -37,12 +40,13 @@ from block_prefix_analyzer.analysis.f13 import (
     DISPLAY_LABEL_ORDER,
     F13Series,
     ReuseEventRow,
+    _identify_single_turn_request_ids,
     _ordered_types,
 )
 from block_prefix_analyzer.types import BlockId, RequestRecord, sort_records
 
 # ---- Frozen operational constants ----
-SINGLE_TURN_DEFINITION = "root_requests__parent_chat_id_eq_neg1_or_absent"
+SINGLE_TURN_DEFINITION = "single_round_sessions__len_eq_1__multi_turn_roots_excluded"
 EVENT_DEFINITION = "content_block_reuse__single_turn_pool"
 REUSE_TIME_DEFINITION = "last_seen__current_ts_minus_last_seen_ts_in_seconds"
 DEDUPE_RULE = "set_dedup__one_event_per_unique_block_per_request"
@@ -167,7 +171,8 @@ def compute_f13_strict(
         type_label_mapping = DEFAULT_TYPE_LABEL_MAPPING
 
     records = list(records)
-    single_turn_ids = identify_root_requests(records)
+    # Paper definition: sessions with exactly 1 request (multi-turn roots excluded).
+    single_turn_ids = _identify_single_turn_request_ids(records)
     sorted_recs = sort_records(records)
 
     # ---- Backward pass: CDF events ----
@@ -202,7 +207,8 @@ def compute_f13_strict(
     cdf_rows = _compute_cdf_rows(all_events)
 
     # ---- Forward pass: inset ----
-    fwd_records = compute_forward_inset(records, type_label_mapping, block_size)
+    fwd_records = compute_forward_inset(records, type_label_mapping, block_size,
+                                        single_turn_ids=single_turn_ids)
     breakdown_rows = forward_inset_to_breakdown_rows(
         fwd_records, type_label_mapping, len(single_turn_ids)
     )
@@ -217,11 +223,10 @@ def compute_f13_strict(
         cdf_rows=cdf_rows,
         breakdown_rows=breakdown_rows,
         single_turn_request_count=len(single_turn_ids),
-        request_count_with_reuse=forward_reusable_count,   # FORWARD-LOOKING
-        request_count_without_reuse=len(single_turn_ids) - forward_reusable_count,
         content_block_reuse_event_count_total=len(all_events),
         content_block_reuse_event_count_over_56min=over_count,
         x_axis_max_minutes=x_axis_max_minutes,
+        forward_reusable_request_count=forward_reusable_count,
     )
 
     return F13StrictOutput(
@@ -304,10 +309,12 @@ def save_strict_metadata_json(
         "x_axis_max_minutes": series.x_axis_max_minutes,
         "single_turn_request_count": total,
         # Forward-looking inset (main)
-        "content_reused_request_count": series.request_count_with_reuse,
-        "not_reusable_request_count": series.request_count_without_reuse,
-        "reusable_request_ratio": (
-            series.request_count_with_reuse / total if total > 0 else 0.0
+        "forward_reusable_request_count": series.forward_reusable_request_count,
+        "forward_non_reusable_request_count": (
+            total - series.forward_reusable_request_count
+        ),
+        "forward_reusable_request_ratio": (
+            series.forward_reusable_request_count / total if total > 0 else 0.0
         ),
         "content_block_reuse_event_count_total": series.content_block_reuse_event_count_total,
         "content_block_reuse_event_count_over_56min": series.content_block_reuse_event_count_over_56min,

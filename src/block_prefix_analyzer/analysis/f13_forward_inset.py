@@ -46,6 +46,7 @@ from block_prefix_analyzer.analysis.f13 import (
     BreakdownRow,
     DEFAULT_TYPE_LABEL_MAPPING,
     DISPLAY_LABEL_ORDER,
+    _identify_single_turn_request_ids,
     _ordered_types,
 )
 from block_prefix_analyzer.types import BlockId, RequestRecord, sort_records
@@ -114,30 +115,38 @@ def compute_forward_inset(
     records: list[RequestRecord],
     type_label_mapping: dict[str, str] | None = None,
     block_size: int = 16,
+    single_turn_ids: frozenset[str] | None = None,
 ) -> list[ForwardReuseRecord]:
-    """Compute forward-looking reusability for every root request.
+    """Compute forward-looking reusability for every single-turn request.
 
     Parameters
     ----------
     records:
-        All records from the trace (multi-turn follow-ups are filtered out).
+        All records from the trace.
     type_label_mapping:
         Override type → display_label mapping.
     block_size:
         Tokens per block (used for content_reused_block_approx_tokens approximation).
+    single_turn_ids:
+        Pre-computed frozenset of single-turn request_ids (sessions with exactly
+        1 request).  If None, computed internally via
+        ``_identify_single_turn_request_ids``.  Pass the caller's already-computed
+        set to avoid redundant session reconstruction.
 
     Returns
     -------
     list[ForwardReuseRecord]
-        One entry per root request, in chronological order.
+        One entry per single-turn request, in chronological order.
     """
     if type_label_mapping is None:
         type_label_mapping = DEFAULT_TYPE_LABEL_MAPPING
 
-    from block_prefix_analyzer.analysis.f13_strict import _is_root_request
+    records_list = list(records)
+    if single_turn_ids is None:
+        single_turn_ids = _identify_single_turn_request_ids(records_list)
 
-    all_sorted = sort_records(list(records))
-    root_recs = [r for r in all_sorted if _is_root_request(r)]
+    all_sorted = sort_records(records_list)
+    root_recs = [r for r in all_sorted if r.request_id in single_turn_ids]
 
     # Build: for each block, the sorted list of (timestamp, arrival_index, request_id)
     # for root requests that contain it.  Sorted by (ts, ai) because root_recs are

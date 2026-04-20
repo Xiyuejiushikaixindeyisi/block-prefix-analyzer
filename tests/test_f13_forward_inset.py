@@ -93,8 +93,8 @@ class TestDirectionDistinction:
 
         # Backward-looking (via compute_f13_strict)
         out = compute_f13_strict(records)
-        # request_count_with_reuse is now forward-looking = 1 (only r1)
-        assert out.series.request_count_with_reuse == 1
+        # forward_reusable_request_count = 1 (only r1 reused by r3)
+        assert out.series.forward_reusable_request_count == 1
         # backward count: only r3 = 1
         assert out.backward_reusable_count == 1
 
@@ -138,12 +138,20 @@ class TestFutureReuseDetection:
         assert by_id["1"].content_reused_block_count == 1  # only block 10 is shared
 
     def test_future_followup_does_not_count(self):
-        """A follow-up request reusing r1's block does NOT make r1 forward-reusable."""
-        r1 = _rec(1, 0,  [10], parent_chat_id=-1)
-        r2 = _rec(2, 10, [10], parent_chat_id=1)   # follow-up: NOT a root
-        fwd = compute_forward_inset([r1, r2])
+        """A follow-up reusing r1's block does NOT make r1 forward-reusable.
+
+        r0 is a multi-turn root (has follow-up r2).
+        r1 is truly single-turn (no follow-up, standalone session).
+        r2 shares block 10 with r1 but r2 is a follow-up → excluded.
+        Therefore r1 has no future single-turn reuser → not forward-reusable.
+        """
+        r0 = _rec(0, -1, [],   parent_chat_id=-1)   # multi-turn root (r2 follows up)
+        r1 = _rec(1,  0, [10], parent_chat_id=-1)   # standalone single-turn
+        r2 = _rec(2, 10, [10], parent_chat_id=0)    # follow-up of r0; NOT single-turn
+        fwd = compute_forward_inset([r0, r1, r2])
         by_id = {r.request_id: r for r in fwd}
-        # r2 is excluded (not a root), so r1 has no future root reuser
+        # r0 excluded (multi-turn root); r2 excluded (follow-up)
+        # r1 is the only single-turn; r2 shares its block but is not a future single-turn
         assert by_id["1"].is_reusable_by_future_root is False
 
     def test_first_reused_by_is_earliest_future_root(self):
@@ -185,7 +193,9 @@ class TestDenominator:
         r1 = _rec(1, 0,  [1])
         r2 = _rec(2, 10, [1])
         out = compute_f13_strict([r1, r2])
-        total = out.series.request_count_with_reuse + out.series.request_count_without_reuse
+        total = out.series.forward_reusable_request_count + (
+            out.series.single_turn_request_count - out.series.forward_reusable_request_count
+        )
         assert total == out.series.single_turn_request_count == 2
 
 
@@ -216,20 +226,26 @@ class TestLastRequestNotReusable:
 
 class TestFollowUpsExcluded:
     def test_followups_not_in_forward_records(self):
-        r1 = _rec(1, 0,  [1, 2], parent_chat_id=-1)
-        r2 = _rec(2, 10, [1, 3], parent_chat_id=1)   # follow-up
-        r3 = _rec(3, 20, [1, 4], parent_chat_id=-1)  # root
-        fwd = compute_forward_inset([r1, r2, r3])
+        # r0: multi-turn root (r2 follows it); r1, r3: single-turn
+        r0 = _rec(0, -1, [9],   parent_chat_id=-1)   # multi-turn root
+        r1 = _rec(1,  0, [1, 2], parent_chat_id=-1)  # single-turn
+        r2 = _rec(2, 10, [1, 3], parent_chat_id=0)   # follow-up of r0
+        r3 = _rec(3, 20, [1, 4], parent_chat_id=-1)  # single-turn
+        fwd = compute_forward_inset([r0, r1, r2, r3])
         ids = {r.request_id for r in fwd}
         assert "2" not in ids   # follow-up excluded
+        assert "0" not in ids   # multi-turn root excluded
         assert ids == {"1", "3"}
 
     def test_followup_sharing_block_does_not_make_source_reusable(self):
-        """A follow-up with block 1 (from r1) does NOT make r1 forward-reusable."""
-        r1 = _rec(1, 0,  [1], parent_chat_id=-1)
-        fu = _rec(2, 10, [1], parent_chat_id=1)   # follow-up, has block 1
-        fwd = compute_forward_inset([r1, fu])
+        """A follow-up with block 1 does NOT make the standalone r1 forward-reusable."""
+        # r0: multi-turn root (fu follows it); r1: standalone single-turn
+        r0 = _rec(0, -1, [9], parent_chat_id=-1)   # multi-turn root
+        r1 = _rec(1,  0, [1], parent_chat_id=-1)   # single-turn
+        fu = _rec(2, 10, [1], parent_chat_id=0)    # follow-up of r0; has block 1
+        fwd = compute_forward_inset([r0, r1, fu])
         by_id = {r.request_id: r for r in fwd}
+        # fu is excluded (follow-up); r1 has no future single-turn reuser
         assert by_id["1"].is_reusable_by_future_root is False
 
 
@@ -333,18 +349,20 @@ class TestCsvSchema:
             header = f.readline().strip().split(",")
         assert header == self.EXPECTED_COLUMNS
 
-    def test_csv_row_count_equals_root_count(self, tmp_path):
+    def test_csv_row_count_equals_single_turn_count(self, tmp_path):
+        # r0: multi-turn root (r2 follows up); r1, r3: single-turn
         records = [
-            _rec(1, 0,  [1], parent_chat_id=-1),
-            _rec(2, 10, [2], parent_chat_id=1),   # follow-up
-            _rec(3, 20, [3], parent_chat_id=-1),
+            _rec(0, -1, [9], parent_chat_id=-1),  # multi-turn root
+            _rec(1,  0, [1], parent_chat_id=-1),  # single-turn
+            _rec(2, 10, [2], parent_chat_id=0),   # follow-up of r0
+            _rec(3, 20, [3], parent_chat_id=-1),  # single-turn
         ]
         fwd = compute_forward_inset(records)
         path = tmp_path / "fwd.csv"
         save_forward_inset_csv(fwd, path)
         with path.open() as f:
             rows = list(csv.DictReader(f))
-        assert len(rows) == 2  # only 2 root requests
+        assert len(rows) == 2  # only r1 and r3 are single-turn
 
 
 # ---------------------------------------------------------------------------

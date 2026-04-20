@@ -1,8 +1,8 @@
 """Tests for F13 strict paper-definition analysis.
 
 Test areas (10 required):
-  1. single-turn = parent_chat_id == -1 (or absent)
-  2. Multi-turn roots ARE included; single-round-session restriction removed
+  1. single-turn identification helpers (root predicate + identify_root_requests)
+  2. Multi-turn roots ARE excluded; only sessions with length==1 are single-turn
   3. Main CDF uses block-level reusable events, not prefix events
   4. reuse_time uses last_seen semantics
   5. Within-request dedup: repeated block_id counts once
@@ -78,29 +78,33 @@ def _rec_no_parent_field(request_id, timestamp, block_ids, req_type="text") -> R
 # Shared fixture
 #
 # Timeline:
-#   t=0   r1: root (pid=-1), text, blocks=[1, 2, 3]
+#   t=0   r1: root (pid=-1), text, blocks=[1, 2, 3]  — root of 2-turn session
 #   t=10  r2: follow-up of r1 (pid=1), text, blocks=[1, 2, 4]
-#   t=20  r3: root (pid=-1), text, blocks=[1, 5, 6]
-#   t=30  r4: root (pid=-1), image, blocks=[7, 8, 9]
-#   t=40  r5: root (pid=-1), text, blocks=[1, 2, 4, 10]
+#   t=20  r3: root (pid=-1), text, blocks=[1, 5, 6]  — single-turn session
+#   t=30  r4: root (pid=-1), image, blocks=[7, 8, 9] — single-turn session
+#   t=40  r5: root (pid=-1), text, blocks=[1, 2, 4, 10] — single-turn session
 #
-# Single-turn (root) ids: {r1, r3, r4, r5}  (r2 is a follow-up)
+# Single-turn (session length == 1): {r3, r4, r5}
+#   r1 EXCLUDED — it is the root of a 2-request session (has follow-up r2)
+#   r2 EXCLUDED — follow-up (pid=1)
 #
-# Replay (single-turn pool only):
-#   r1 t=0:  pool empty → 0 events; pool becomes {1:0, 2:0, 3:0}
-#   r3 t=20: eligible={1}   (pool has 1,2,3; r3 has 1,5,6)
-#            event: block 1, rt=20s; pool += {5:20, 6:20}, update 1->20
-#   r4 t=30: eligible={}    (pool has 1,2,3,5,6; r4 has 7,8,9)
-#            0 events; pool += {7:30, 8:30, 9:30}
-#   r5 t=40: eligible={1,2} (pool has 1,2,3,5,6,7,8,9; r5 has 1,2,4,10)
-#            block 4 is NOT in pool (r2 did not update pool)
-#            events: block 1 rt=40-20=20s, block 2 rt=40-0=40s
-#            pool updates: 1->40, 2->40, 4->40, 10->40
+# Replay (single-turn pool only, r1 and r2 excluded):
+#   r3 t=20: pool empty → 0 events; pool becomes {1:20, 5:20, 6:20}
+#   r4 t=30: pool has {1,5,6}; r4 blocks={7,8,9} → 0 events; pool += {7:30,8:30,9:30}
+#   r5 t=40: pool has {1,5,6,7,8,9}; r5 blocks={1,2,4,10} → eligible={1}
+#            block 2 NOT in pool (r1 excluded); block 4 NOT in pool (r2 excluded)
+#            event: block 1, rt=40-20=20s
 #
 # Summary:
-#   reuse_events_total = 3  (r3: 1 event; r5: 2 events)
-#   requests_with_reuse = {r3, r5}
-#   requests_without_reuse = {r1, r4}
+#   reuse_events_total = 1  (r5: 1 event)
+#   backward_reusable = {r5}
+#   single_turn_request_count = 3  (r3, r4, r5)
+#
+# Forward-inset (which single-turn requests are reused by a future single-turn):
+#   r3 (blocks={1,5,6}): future={r4,r5}; r5 has block 1 → REUSABLE
+#   r4 (blocks={7,8,9}): future={r5}; no overlap → NOT reusable
+#   r5 (blocks={1,2,4,10}): no future → NOT reusable
+#   forward_reusable_request_count = 1  (r3 only)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -115,7 +119,10 @@ def base_records():
 
 
 # ===========================================================================
-# Area 1: single-turn = parent_chat_id == -1 (or absent)
+# Area 1: helper predicates (_is_root_request, identify_root_requests)
+#         These remain available but are no longer used as the main filter.
+#         The main filter (_identify_single_turn_request_ids) uses session
+#         reconstruction and len(session)==1.
 # ===========================================================================
 
 class TestArea1_SingleTurnDefinition:
@@ -142,30 +149,36 @@ class TestArea1_SingleTurnDefinition:
 
 
 # ===========================================================================
-# Area 2: multi-turn ROOTS are included; single-round-session NOT required
+# Area 2: multi-turn session roots ARE excluded from single-turn set.
+#         Only requests whose session has exactly 1 request are single-turn.
 # ===========================================================================
 
-class TestArea2_MultiTurnRootsIncluded:
-    def test_multi_turn_root_is_single_turn(self):
-        # r_root is root of a two-turn session (has a child r_child)
+class TestArea2_MultiTurnRootsExcluded:
+    def test_multi_turn_root_excluded_from_single_turn(self):
+        # r_root starts a two-turn session (r_child follows up)
+        # → r_root is NOT single-turn even though parent_chat_id == -1
+        from block_prefix_analyzer.analysis.f13 import _identify_single_turn_request_ids
         r_root = _rec(10, 0, [1, 2], parent_chat_id=-1, req_type="text")
         r_child = _rec(11, 5, [1, 3], parent_chat_id=10, req_type="text")
-        roots = identify_root_requests([r_root, r_child])
-        assert "10" in roots      # root IS included despite having a child
-        assert "11" not in roots  # follow-up is excluded
+        st_ids = _identify_single_turn_request_ids([r_root, r_child])
+        assert "10" not in st_ids  # root of multi-turn session → excluded
+        assert "11" not in st_ids  # follow-up → excluded
+        assert len(st_ids) == 0
 
-    def test_multi_turn_root_produces_events(self):
-        # Two sessions: session A (root a1), session B (root b1 + follow-up b2)
-        a1 = _rec(1, 0, [100, 200], parent_chat_id=-1, req_type="text")
-        b1 = _rec(2, 10, [100, 300], parent_chat_id=-1, req_type="text")  # root
-        b2 = _rec(3, 20, [100, 400], parent_chat_id=2, req_type="text")   # follow-up
+    def test_multi_turn_root_not_in_pool(self):
+        # a1: single-turn; b1 root of 2-turn session (b2 follow-up)
+        # b1 is excluded → its blocks do NOT warm the pool
+        # Therefore c1 sees an empty pool and generates no events.
+        a1 = _rec(1, 0,  [100, 200], parent_chat_id=-1, req_type="text")  # single-turn
+        b1 = _rec(2, 10, [100, 300], parent_chat_id=-1, req_type="text")  # multi-turn root
+        b2 = _rec(3, 20, [100, 400], parent_chat_id=2,  req_type="text")  # follow-up
+        c1 = _rec(4, 30, [100, 200], parent_chat_id=-1, req_type="text")  # single-turn
 
-        series = compute_f13_strict_series([a1, b1, b2])
-        # b1 is root and sees block 100 from a1 → 1 event
-        assert series.content_block_reuse_event_count_total == 1
-        # b2 is follow-up and is completely skipped
-        # b1 is included even though it's a multi-turn session root
-        assert series.single_turn_request_count == 2  # a1 and b1
+        series = compute_f13_strict_series([a1, b1, b2, c1])
+        # single-turn = {a1, c1} (b1 excluded — multi-turn root)
+        assert series.single_turn_request_count == 2
+        # c1 sees pool from a1 only: {100, 200} → eligible={100, 200} → 2 events
+        assert series.content_block_reuse_event_count_total == 2
 
 
 # ===========================================================================
@@ -233,32 +246,35 @@ class TestArea5_WithinRequestDedup:
 
 
 # ===========================================================================
-# Area 6: inset uses FORWARD-LOOKING definition (reusable by future root)
+# Area 6: inset uses FORWARD-LOOKING definition (reusable by future single-turn)
 #
-# Base fixture forward-reusable analysis:
-#   r1 (t=0, blocks={1,2,3}): future roots r3 (block 1 overlap) → REUSABLE
-#   r3 (t=20, blocks={1,5,6}): future roots r5 (block 1 overlap) → REUSABLE
-#   r4 (t=30, blocks={7,8,9}): future roots r5 (no overlap)      → NOT reusable
-#   r5 (t=40, blocks={1,2,4,10}): no future root                 → NOT reusable
-# Forward-reusable set = {r1, r3}, count = 2, not-reusable = {r4, r5}, count = 2
+# Base fixture forward-reusable analysis (single-turn = {r3, r4, r5}):
+#   r3 (t=20, blocks={1,5,6}): future={r4,r5}; r5 has block 1 → REUSABLE
+#   r4 (t=30, blocks={7,8,9}): future={r5}; no overlap         → NOT reusable
+#   r5 (t=40, blocks={1,2,4,10}): no future                    → NOT reusable
+# Forward-reusable set = {r3}, count = 1, not-reusable = {r4, r5}, count = 2
 # ===========================================================================
 
 class TestArea6_InsetForwardLooking:
     def test_inset_uses_forward_reusable_count(self, base_records):
         series = compute_f13_strict_series(base_records)
-        # Forward-reusable: r1 and r3 (count=2); NOT r3 and r5 (backward)
-        assert series.request_count_with_reuse == 2
-        assert series.request_count_without_reuse == 2
+        # Single-turn = {r3, r4, r5} (r1 excluded as multi-turn root)
+        # Forward-reusable: r3 only (block 1 appears in future r5)
+        assert series.forward_reusable_request_count == 1
+        assert series.single_turn_request_count == 3
+        assert (series.single_turn_request_count - series.forward_reusable_request_count) == 2
 
     def test_inset_denominator_is_all_single_turn_requests(self, base_records):
         series = compute_f13_strict_series(base_records)
-        total = series.request_count_with_reuse + series.request_count_without_reuse
-        assert total == series.single_turn_request_count == 4
+        total = series.forward_reusable_request_count + (
+            series.single_turn_request_count - series.forward_reusable_request_count
+        )
+        assert total == series.single_turn_request_count == 3
 
     def test_inset_fraction_sums_to_reusable_fraction(self, base_records):
         series = compute_f13_strict_series(base_records)
         total_frac = sum(row.fraction for row in series.breakdown_rows)
-        expected = series.request_count_with_reuse / series.single_turn_request_count
+        expected = series.forward_reusable_request_count / series.single_turn_request_count
         assert total_frac == pytest.approx(expected)
 
     def test_pool_definition_tags(self):
@@ -282,21 +298,22 @@ class TestArea7_FollowUpsExcludedFromPool:
         # CDF: block 3 only appeared in r2 (follow-up), which doesn't update pool → 0 events
         assert series.content_block_reuse_event_count_total == 0
         # Forward inset: r1 blocks={1,2} vs r3 blocks={3,5} → no overlap → 0 forward-reusable
-        assert series.request_count_with_reuse == 0
+        assert series.forward_reusable_request_count == 0
 
     def test_followup_block_isolated_from_pool(self, base_records):
-        # r5 blocks=[1, 2, 4, 10]; block 4 only appeared in r2 (follow-up)
-        # So r5 should have events for blocks 1 and 2 only (not 4)
+        # r5 blocks=[1, 2, 4, 10]
+        # block 2 only in r1 (multi-turn root → excluded from pool)
+        # block 4 only in r2 (follow-up → excluded from pool)
+        # Only block 1 (from r3, single-turn) is in pool when r5 arrives
         series = compute_f13_strict_series(base_records)
         r5_events = [e for e in series.events if e.request_id == "5"]
-        reused_blocks_via_r5 = set()
-        # We can't directly inspect block_ids from events, but event count = 2 (not 3)
-        assert len(r5_events) == 2
+        assert len(r5_events) == 1  # only block 1 hits (not block 2 or 4)
 
-    def test_followup_does_not_appear_in_single_turn_count(self, base_records):
+    def test_non_single_turn_not_in_count(self, base_records):
         series = compute_f13_strict_series(base_records)
-        # r1, r3, r4, r5 are roots (4 total); r2 is follow-up
-        assert series.single_turn_request_count == 4
+        # r3, r4, r5 are single-turn (session len==1)
+        # r1 excluded (has follow-up r2); r2 excluded (follow-up)
+        assert series.single_turn_request_count == 3
 
 
 # ===========================================================================
@@ -345,8 +362,8 @@ class TestArea9_OutputSchema:
         assert hasattr(series, "cdf_rows")
         assert hasattr(series, "breakdown_rows")
         assert hasattr(series, "single_turn_request_count")
-        assert hasattr(series, "request_count_with_reuse")
-        assert hasattr(series, "request_count_without_reuse")
+        assert hasattr(series, "forward_reusable_request_count")
+        assert hasattr(series, "backward_event_hit_request_count")
         assert hasattr(series, "content_block_reuse_event_count_total")
         assert hasattr(series, "content_block_reuse_event_count_over_56min")
         assert hasattr(series, "x_axis_max_minutes")
@@ -387,8 +404,8 @@ class TestArea9_OutputSchema:
             "dedupe_within_request_rule", "breakdown_definition",
             "pool_definition_for_cdf", "pool_definition_for_breakdown",
             "type_label_mapping", "x_axis_max_minutes",
-            "single_turn_request_count", "content_reused_request_count",
-            "not_reusable_request_count", "content_block_reuse_event_count_total",
+            "single_turn_request_count", "forward_reusable_request_count",
+            "forward_non_reusable_request_count", "content_block_reuse_event_count_total",
             "content_block_reuse_event_count_over_56min", "note_public_adaptation",
         ]
         for key in required_keys:
