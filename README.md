@@ -2,7 +2,7 @@
 
 离线分析 LLM 请求 trace 中 **block 级前缀复用** 的工具。
 
-当前状态：**V1.0 — 主链路完整，145 个测试全部通过**。
+当前状态：**V1 完整 + V2-min 完整 + V2-full 指标完整 + Readiness Gate 通过 — 421 个测试全部通过（10 个 xfail 为预期 pending）**。
 
 ## 设计目标
 - 给定按时间排序的请求流，回放并输出：
@@ -14,9 +14,57 @@
 - 离线、确定性、可单元测试、模块可替换
 
 ## 版本里程碑
-- **V1（当前）**：只处理已包含 `block_hash_ids` 的输入；顺序回放；简单 Trie；基础报表
-- **V2**：接入 tokenizer / chat template / block hash 复现，与框架对齐
+- **V1（完成）**：只处理已包含 `block_hash_ids` 的输入；顺序回放；简单 Trie；基础报表
+- **V2（部分完成）**：接入 tokenizer / chat template / block hash 复现，与框架对齐；见下方状态说明
 - **V3**：性能与规模（radix 压缩、磁盘索引、并行预处理 等）
+
+---
+
+## 当前实现状态（V1 + V2）
+
+> 详见 [`V2_READINESS.md`](./V2_READINESS.md) 获取完整的 validated scope 说明。
+
+### V1 — 全部完成
+
+- 时间序回放引擎（`replay.py`）：query → yield → insert，无 self-hit
+- 两种 hit 口径：`prefix_hit_blocks`（前缀连续命中）+ `reusable_block_count`（任意位置）
+- `MetricsSummary` 聚合与报表输出
+- TraceA 数据加载（`io/traceA_loader.py`）
+- F4 双图复现（reusable + prefix-aware），已在 TraceA 上跑通
+
+### V2 — 内部对齐已完成，框架对齐 pending
+
+| 组件 | 状态 |
+|---|---|
+| V2-min 链路（normalize → render → tokenize → block build → V1） | **完成（内部一致）** |
+| 三种 hit 口径（block reusable / prefix hit / token-level）| **已锁死并测试** |
+| `reuse_time`（last_seen 口径）| **完成** |
+| `lifespan`（last_reuse − first_seen）| **完成** |
+| session/category helpers（F13–F15 前置）| **完成** |
+| Qwen2 chat template Layer 1（渲染逻辑） | **VERIFIED**（纯 Python，无依赖） |
+| Qwen2 tokenizer Layer 2（token IDs） | **PENDING**（需 `pip install transformers`） |
+| vLLM block hash Layer 3（MurmurHash3 链式）| **PENDING**（需 `pip install mmh3`） |
+
+### 两条分析路径的能力边界
+
+#### 路径 A：TraceA replay 路径（**现在可用**）
+
+TraceA 数据集自带预计算的 `hash_ids`（来自 vLLM 生产环境），加载时直接映射为 `block_ids`，**不经过 V2 chat template / tokenizer / block hash 生成链路**。
+
+因此以下分析现在即可进行：
+
+- F4 全局 block 复用率（已完成）
+- F13 single-turn 场景 reuse_time 分布（依赖 session helper，已就绪）
+- F14 multi-turn / follow-up 场景 reuse_time 分布（依赖 session helper，已就绪）
+- F15 不同 request category 的 reuse_time 分布（依赖 category helper，已就绪）
+
+#### 路径 B：raw request 完整对齐路径（**部分 pending**）
+
+从原始消息（`messages: list[Message]`）出发，经 chat template → tokenizer → block builder 完整链路生成 `block_ids`，再进入 V1 replay。
+
+当前状态：Layer 1（渲染）已验证；Layer 2（tokenizer）和 Layer 3（block hash）待真实框架接通后才能宣称"与 vLLM 完全对齐"。
+
+**不要把路径 B 的 pending 状态与路径 A 的可用性混淆。**
 
 ## 目录结构
 ```

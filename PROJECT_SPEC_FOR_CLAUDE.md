@@ -358,3 +358,44 @@ The first coding round should produce only:
 - clear notes about ambiguities or risks
 
 It should **not** attempt to finish the analyzer in one shot.
+
+---
+
+## 11. Current implementation status / divergence from original plan
+
+> **Added**: reflects the state as of the V2 readiness gate (commit 56043b3).
+> The original spec above remains the canonical design blueprint; this section
+> records what has been built and where the current implementation diverges or
+> extends beyond the original plan.
+
+### What is complete
+
+- **V1** — fully implemented per spec: chronological replay, two hit metrics,
+  `MetricsSummary`, golden tests (145 tests).
+- **TraceA paper repro** — F4 dual plot (reusable + prefix-aware) generated
+  from the public TraceA dataset (43,058 records, block_size=16).
+- **V2-min pipeline** — `normalize → render → tokenize → block build → V1 record`;
+  internal consistency verified (87 tests); SHA-256 placeholder hash.
+- **V2-full metrics** — `token_level_prefix_hit_ratio`, `mean_reuse_time`,
+  `lifespan` (`compute_block_lifespans`), session/category helpers.
+- **V2 readiness gate** — `QwenChatTemplate` (Layer 1 VERIFIED), xfail
+  guards for Layer 2–3, readiness checklist C1–C6 tested (421 total tests).
+
+### Divergence from original plan
+
+| Original plan | Current state |
+|---|---|
+| `adapters/vllm_tokenizer.py` | `v2/adapters/hf_tokenizer.py` — interface only, PENDING |
+| `adapters/block_builder.py` | `v2/adapters/block_builder.py` (SHA-256) + `siphash_builder.py` (mmh3 stub) |
+| V2 "verify block sequences match framework" | Layer 1 verified; Layers 2–3 xfail (pending `transformers` + `mmh3`) |
+| `adapters/` as flat directory under `block_prefix_analyzer/` | Implemented as `v2/adapters/` sub-package |
+
+### Two-path distinction (not in original spec)
+
+The original spec did not distinguish between:
+- **Path A**: traces already carrying pre-computed `hash_ids` (TraceA)
+- **Path B**: raw requests that need the full V2 template→tokenizer→hash chain
+
+This distinction is critical. Path A is fully operational for F13–F15 analysis.
+Path B requires `transformers` + `mmh3` for absolute framework alignment.
+See `V2_READINESS.md` and `CLAUDE.md §10` for details.

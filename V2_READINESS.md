@@ -6,6 +6,49 @@
 
 ---
 
+## 0. Two Distinct Analysis Paths
+
+This project serves two fundamentally different use cases.  **They must not be
+conflated** in code, documentation, or analysis conclusions.
+
+### Path A — TraceA replay (operational NOW)
+
+```
+TraceA JSONL  ──►  traceA_loader.py  ──►  RequestRecord (block_ids = hash_ids)
+                                                    │
+                                                    ▼
+                                            V1 replay + enriched_replay
+                                                    │
+                                                    ▼
+                                     F4 / F13 / F14 / F15 analysis
+```
+
+- Input already contains `hash_ids` computed by vLLM in production.
+- `traceA_loader.py` maps `hash_ids → block_ids` directly.
+- **Does NOT pass through** V2 chat template / tokenizer / block builder.
+- Layer 2–3 pending status does **not** affect this path.
+- All F4/F13/F14/F15 analysis of TraceA data uses this path.
+
+### Path B — raw request full-alignment (partially PENDING)
+
+```
+RawRequest(messages)  ──►  ChatTemplateAdapter  ──►  TokenizerAdapter
+                                                              │
+                                                              ▼
+                                                    BlockBuilder  ──►  block_ids
+                                                                            │
+                                                                            ▼
+                                                                   V1 replay + metrics
+```
+
+- Layer 1 (chat template rendering): **VERIFIED** for both MinimalChatTemplate
+  and QwenChatTemplate.
+- Layer 2 (tokenizer): **PENDING** — requires `pip install transformers`.
+- Layer 3 (block hash): **PENDING** — requires `pip install mmh3`.
+- Cannot claim "exact vLLM alignment" until Layers 2–3 are verified.
+
+---
+
 ## 1. Target Configuration
 
 | Layer | Component | Status |
@@ -73,26 +116,31 @@ corresponding update to all golden fixtures and the CLAUDE.md definition table.
 
 ---
 
-## 4. What Can Be Analyzed Now
+## 4. Applicability by Path
 
-With the **internal-only configuration** (MinimalChatTemplate + CharTokenizer +
-SimpleBlockBuilder) and the **TraceA dataset** (43,058 records, block_size=16):
+### Path A — TraceA replay (what can be done now)
 
-| Analysis | Feasibility |
-|---|---|
-| F4 (reusable ratio over time) | ✅ Done — 59.40% overall |
-| F4 (prefix-aware hit ratio over time) | ✅ Done — 57.79% overall |
-| F13 (per-session hit distribution) | ✅ Ready — session helpers in place |
-| F14 (per-category/type breakdown) | ✅ Ready — category helpers in place |
-| F15 (reuse_time / lifespan distribution) | ✅ Ready — enriched_replay + compute_block_lifespans |
-| Comparison to paper absolute numbers | ❌ Not yet — requires Qwen2 tokenizer + vLLM hash |
-| Exact vLLM cache-key alignment | ❌ Not yet — requires ChainedBlockBuilder + mmh3 |
+TraceA carries pre-computed vLLM `hash_ids`; the V2 template/tokenizer/hash
+chain is **bypassed entirely**.  All analysis below is currently feasible:
 
-The TraceA dataset already carries `hash_ids` (pre-computed vLLM block IDs), so
-for **F13–F15 on TraceA**, the V2 pipeline is NOT the bottleneck — the loader
-(`traceA_loader.py`) uses the original `hash_ids` directly, bypassing the
-chat template and tokenizer layers entirely.  The readiness gate above applies
-to **synthetic / re-tokenized workloads**, not to TraceA replay.
+| Analysis | Status | Note |
+|---|---|---|
+| F4 reusable ratio over time | ✅ Done | 59.40% overall on TraceA |
+| F4 prefix-aware hit ratio over time | ✅ Done | 57.79% overall on TraceA |
+| F13 single-turn reuse_time distribution | ✅ Ready | session helpers in place |
+| F14 multi-turn / follow-up reuse_time | ✅ Ready | category/session helpers in place |
+| F15 reuse_time by request category | ✅ Ready | `get_category()` available |
+| lifespan distribution | ✅ Ready | `compute_block_lifespans()` available |
+
+### Path B — raw request full-alignment (what requires more work)
+
+These conclusions require Path B to be fully verified (Layers 2–3 passing):
+
+| Analysis | Status | Blocker |
+|---|---|---|
+| Comparison to paper absolute token-level numbers | ❌ PENDING | Qwen2 tokenizer Layer 2 |
+| Exact vLLM cache-key alignment | ❌ PENDING | ChainedBlockBuilder + mmh3 Layer 3 |
+| Certifying that synthetic traces match vLLM behaviour | ❌ PENDING | Both layers |
 
 ---
 

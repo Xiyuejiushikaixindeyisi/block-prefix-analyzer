@@ -61,8 +61,48 @@
 
 ---
 
-## 后续步骤
+## V2 实现状态（当前）
 
+> 以下各项在 V1 完成（Step 7）之后陆续实现。原始 V1 约束（无 tokenizer / 无 radix 等）未被破坏。
+
+### V2-min（已完成）
+
+- [x] `v2/schema.py` — `Message` / `RawRequest` 输入模型
+- [x] `v2/normalizer.py` — 输入校验与 float 时间戳标准化
+- [x] `v2/adapters/chat_template.py` — `ChatTemplateAdapter` Protocol + `MinimalChatTemplate`
+- [x] `v2/adapters/tokenizer.py` — `TokenizerAdapter` Protocol + `CharTokenizer`
+- [x] `v2/adapters/block_builder.py` — `SimpleBlockBuilder`（SHA-256，独立 per-block hash）
+- [x] `v2/pipeline.py` — `build_block_records_from_raw_requests()`，完整 V2→V1 链路
+- [x] 87 个测试全部通过；V2 alignment fixtures（内部一致）
+
+### V2-full 指标（已完成）
+
+- [x] `v2/metrics.py` — `enriched_replay()`，新增 `token_level_prefix_hit_ratio` + `mean_reuse_time`
+- [x] `v2/metrics.py` — `compute_block_lifespans()`，离线 `lifespan` 指标
+- [x] `v2/session.py` — `is_root_request()` / `is_followup_request()` / `get_category()` / `group_by_session()`
+- [x] 45 个新测试，全部通过
+
+### V2 readiness gate（已建立）
+
+- [x] `QwenChatTemplate` — Qwen2 渲染逻辑，Layer 1 **VERIFIED**（纯 Python，无依赖）
+- [x] `HFTokenizerAdapter` — 接口就绪，Layer 2 **PENDING**（需 `transformers`，xfail）
+- [x] `ChainedBlockBuilder` — vLLM 兼容的 mmh3 链式 hash 接口，Layer 3 **PENDING**（需 `mmh3`，xfail）
+- [x] `tests/test_v2_readiness.py` — C1–C6 门控测试（44 pass，10 xfail）
+- [x] `V2_READINESS.md` — validated scope 文档，readiness 结论
+
+**gate 结论**：V2 已达到开始 F13–F15 分析的最小门槛（针对 TraceA 路径成立）。
+
+### 当前 pending 项（不阻塞 TraceA F13–F15）
+
+| 项目 | 阻塞 TraceA F13–F15？ | 所需条件 |
+|---|---|---|
+| Qwen2 tokenizer Layer 2 golden 值 | **否** | `pip install transformers` + 下载词表 |
+| vLLM block hash（mmh3）Layer 3 golden 值 | **否** | `pip install mmh3` |
+| 原因说明 | TraceA 自带 `hash_ids`，不经过 V2 template/tokenizer/hash 链路 | — |
+
+---
+
+## 后续步骤（已完成的 V1 步骤，保留供历史参考）
 
 ### Step 5 — Metrics（test: metrics 转绿）
 **目标**：把 per-request 结果聚合成报告指标，**micro + macro 双口径同时输出**。

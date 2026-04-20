@@ -62,3 +62,25 @@
 - 从 tokenizer / chat template 开始做
 - 在 V1 引入 radix 压缩、Redis、SQLite、分布式
 - 通过 `get_best_prefix(request_id)` 这类"随机查询"模型组织核心逻辑（应该是时间序回放）
+
+## 10. V2 两条分析路径的区分（必须遵守）
+
+V2 存在两条完全不同的路径，**任何时候都不得混淆**：
+
+### 路径 A — TraceA replay 路径
+- 输入：已有 `hash_ids` 的 JSONL 记录（TraceA 公开数据集）
+- 数据加载：`io/traceA_loader.py` 直接映射 `hash_ids → block_ids`
+- **不经过** V2 chat template / tokenizer / block builder
+- Layer 2–3 的 pending 状态**不影响**此路径
+- F4 / F13 / F14 / F15 对 TraceA 的分析均走此路径
+
+### 路径 B — raw request 完整对齐路径
+- 输入：原始 `messages: list[Message]`，需经过 chat template → tokenizer → block builder
+- 当前状态：Layer 1（chat template 渲染）已验证；Layer 2（tokenizer）/ Layer 3（block hash）仍 pending
+- **不能宣称与 vLLM 完全对齐**，直到 `HFTokenizerAdapter` + `ChainedBlockBuilder` 的 xfail 测试转为 pass
+
+### 写代码 / 文档时必须遵守
+1. **不要把路径 B 的 pending 层写成"已完成框架对齐"。**
+2. `alignment_status="pending_framework"` 的 fixture 必须保留 `expected_token_ids=None` 和 `expected_block_ids=None`，直到真实值被填入。
+3. `xfail` 测试代表"诚实的 pending 承诺"，不得删除或改为 skip（除非真正填入了 golden 值）。
+4. 在分析报告 / commit message 中，必须区分"对 TraceA hash_ids 的分析结论"和"对 raw request 完整链路的对齐结论"。
