@@ -1,0 +1,23 @@
+# F13 paper reproduction — prefix-hit-defined events (supplementary prefix-aware view)
+#
+# Event definition: prefix
+#   For each single-turn request: determine the contiguous prefix-hit segment
+#   (blocks 0..prefix_hit-1 matching the prefix trie from the start).
+#   Take unique blocks within that segment that were seen before and form
+#   one reuse event each.
+#   reuse_time = current.timestamp - last_seen_ts[block_id]
+#   Blocks outside the prefix segment are excluded even if they were seen before.
+#
+# Single-turn definition:
+#   Same as the reusable figure — sessions of exactly 1 request.
+#
+# This is the supplementary prefix-aware view for comparison with the reusable figure.
+# It is NOT the paper's primary definition; it is a parallel analysis.
+
+event_definition: prefix
+input_file: data/public/qwen_traceA_blksz_16.jsonl
+output_dir: outputs/paper_repro/f13_traceA_public_prefix
+trace_name: traceA_public
+x_axis_max_minutes: 56
+figure_variant: supplementary_prefix_aware_view
+note_public_adaptation: "2-hour trace-relative window, Trace A only, single-turn sessions only"

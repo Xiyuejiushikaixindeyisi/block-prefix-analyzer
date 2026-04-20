@@ -1,0 +1,20 @@
+# F13 paper reproduction — block-level reusable events (main reproduction view)
+#
+# Event definition: reusable
+#   For each single-turn request: for each unique block in hash_ids that
+#   appeared in any strictly earlier request, form one reuse event.
+#   reuse_time = current.timestamp - last_seen_ts[block_id]
+#
+# Single-turn definition:
+#   A request whose session (reconstructed from parent_chat_id chains)
+#   contains exactly 1 request.
+#
+# This is the main reproduction figure, closer to the paper's primary definition.
+
+event_definition: reusable
+input_file: data/public/qwen_traceA_blksz_16.jsonl
+output_dir: outputs/paper_repro/f13_traceA_public_reusable
+trace_name: traceA_public
+x_axis_max_minutes: 56
+figure_variant: main_reproduction
+note_public_adaptation: "2-hour trace-relative window, Trace A only, single-turn sessions only"
