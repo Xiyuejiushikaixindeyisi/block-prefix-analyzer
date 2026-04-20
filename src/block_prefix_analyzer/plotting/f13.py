@@ -33,7 +33,7 @@ def _get_color(label: str, fallback_index: int = 0) -> str:
     return _LABEL_COLORS.get(label, _FALLBACK_COLORS[fallback_index % len(_FALLBACK_COLORS)])
 
 
-def plot_f13(series: F13Series, path: Path, *, title: str = "") -> None:
+def plot_f13(series: F13Series, path: Path, *, title: str = "", inset_title: str = "") -> None:
     """Plot reuse-time CDF with inset request-level breakdown.
 
     Main plot
@@ -108,7 +108,7 @@ def plot_f13(series: F13Series, path: Path, *, title: str = "") -> None:
     # Inset: request-level stacked bar
     # ------------------------------------------------------------------
     if series.breakdown_rows:
-        axins = ax.inset_axes([0.04, 0.72, 0.40, 0.22])
+        axins = ax.inset_axes([0.28, 0.06, 0.44, 0.16])
         left = 0.0
         for row in series.breakdown_rows:
             if row.fraction <= 0:
@@ -132,11 +132,12 @@ def plot_f13(series: F13Series, path: Path, *, title: str = "") -> None:
         axins.set_xticks([0, 0.5, 1.0])
         axins.set_xticklabels(["0%", "50%", "100%"], fontsize=7)
         axins.set_yticks([])
-        inset_title = (
-            "Requests with prefix reuse (%)"
-            if series.event_definition == "prefix"
-            else "Requests that can be reused (%)"
-        )
+        if inset_title:
+            pass  # caller-supplied title takes priority
+        elif series.event_definition == "prefix":
+            inset_title = "Requests with prefix reuse (%)"
+        else:
+            inset_title = "Requests that can be reused (%)"
         axins.set_title(inset_title, fontsize=7, pad=2)
         axins.spines["top"].set_visible(False)
         axins.spines["right"].set_visible(False)

@@ -1,0 +1,29 @@
+# F13 paper reproduction — strict root-request definition (main paper alignment)
+#
+# Single-turn definition: root requests (parent_chat_id == -1)
+#   Includes multi-turn session roots; NOT restricted to single-round sessions.
+#
+# Event definition: block-level reusable
+#   For each root request (chronological order): unique blocks that appeared in
+#   any earlier root request form one reuse event each.
+#   reuse_time = current.timestamp - last_seen_ts[block_id]
+#   Within-request dedup: set(block_ids) — one event per unique block.
+#
+# Pool restriction: root requests only
+#   Multi-turn follow-up requests do NOT update the block pool.
+#   This prevents multi-turn warm-up from inflating the reuse rate.
+#
+# Inset definition: request-level reusable fraction
+#   Denominator: all root requests.
+#   Numerator: root requests with >=1 reuse event under the root-only pool.
+#   Semantics: single-turn <-> single-turn reuse, backward-looking.
+
+single_turn_definition: root_requests
+event_definition: reusable
+breakdown_definition: reusable_by_another_single_turn_request
+input_file: data/public/qwen_traceA_blksz_16.jsonl
+output_dir: outputs/paper_repro/f13_traceA_public_strict
+trace_name: traceA_public
+x_axis_max_minutes: 56
+figure_variant: strict_paper_definition
+note_public_adaptation: "2-hour trace-relative window, Trace A only, root requests only, single-turn pool"
