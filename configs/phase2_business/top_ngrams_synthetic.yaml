@@ -1,0 +1,10 @@
+# Top-ngrams analysis — business dataset (synthetic)
+# Run: python scripts/generate_top_ngrams_business.py configs/phase2_business/top_ngrams_synthetic.yaml
+
+trace_name: business_synthetic
+input_file: data/synthetic/business_synthetic.jsonl
+block_size: 128
+top_k: 10
+min_count: 2
+output_dir: outputs/phase2_business/top_ngrams_synthetic
+note: "synthetic dataset — min_count=2 appropriate for 100-request synthetic data"

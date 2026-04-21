@@ -171,6 +171,14 @@ def save_metadata_json(
             "total_norm[t] = total_blocks_sum[t] / mean(total_blocks_sum over all bins); "
             "hit_norm[t] = hit_blocks_sum[t] / same denominator"
         ),
+        "semantic_note": (
+            "content_prefix_reuse: equivalent to ideal (infinite-capacity) vLLM prefix "
+            "cache hit count — hash_ids are Salted SipHash-2-4(16 tokens), so matching "
+            "prefix hash_ids implies identical prefix token content and identical vLLM "
+            "chained keys. Finite-capacity hit rate is bounded above by this value. "
+            "content_block_reuse: any-position block overlap — NOT equivalent to vLLM "
+            "prefix cache hit."
+        ),
         "normalization_denom": series.normalization_denom,
         "note_public_adaptation": note_public_adaptation,
         "figure_variant": figure_variant,

@@ -1,0 +1,11 @@
+# E5: Top-N block n-grams decoded to original text (synthetic dataset)
+# Run: python scripts/generate_e5_block_text.py configs/phase2_business/e5_block_text_synthetic.yaml
+
+trace_name: business_synthetic
+input_file: data/synthetic/business_synthetic.jsonl
+block_size: 128
+top_k: 10
+min_count: 2
+max_chars: 300
+output_dir: outputs/phase2_business/e5_block_text_synthetic
+note: "synthetic dataset — expected top entries: SYSTEM_PROMPT (8 users × 5 requests) and HOT_PROMPT (20 users)"

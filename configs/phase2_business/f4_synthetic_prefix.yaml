@@ -1,0 +1,14 @@
+# F4 figure — business dataset (synthetic), content-prefix-reuse variant
+# Hit definition: content_prefix_reuse_blocks
+#   Contiguous prefix match from request start — equivalent to ideal
+#   (infinite-capacity, same-model) vLLM APC hit count.
+# Run: python scripts/generate_f4_business.py configs/phase2_business/f4_synthetic_prefix.yaml
+
+trace_name: business_synthetic
+input_file: data/synthetic/business_synthetic.jsonl
+hit_metric: content_prefix_reuse
+block_size: 128
+bin_size_seconds: 300
+output_dir: outputs/phase2_business/f4_synthetic_prefix
+figure_variant: content_prefix_reuse
+note: "synthetic dataset — 3 reuse patterns (shared-prefix, hot-prompt, cold-start)"

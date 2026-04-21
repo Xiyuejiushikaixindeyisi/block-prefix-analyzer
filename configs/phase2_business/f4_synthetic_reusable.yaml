@@ -1,0 +1,14 @@
+# F4 figure — business dataset (synthetic), content-block-reuse variant
+# Hit definition: content_reused_blocks_anywhere
+#   Any block position whose hash appeared in any strictly earlier request.
+#   Widest reuse metric; NOT equivalent to vLLM prefix cache hit.
+# Run: python scripts/generate_f4_business.py configs/phase2_business/f4_synthetic_reusable.yaml
+
+trace_name: business_synthetic
+input_file: data/synthetic/business_synthetic.jsonl
+hit_metric: content_block_reuse
+block_size: 128
+bin_size_seconds: 300
+output_dir: outputs/phase2_business/f4_synthetic_reusable
+figure_variant: content_block_reuse
+note: "synthetic dataset — 3 reuse patterns (shared-prefix, hot-prompt, cold-start)"

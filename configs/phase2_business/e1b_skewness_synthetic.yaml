@@ -1,0 +1,10 @@
+# E1-B: Reuse skewness analysis — hit contribution + request volume (synthetic)
+# Produces two dual-Y-axis (bar + line) figures.
+# Run: python scripts/generate_skewness.py configs/phase2_business/e1b_skewness_synthetic.yaml
+
+trace_name: business_synthetic
+input_file: data/synthetic/business_synthetic.jsonl
+block_size: 128
+min_blocks_pct: 0.0
+output_dir: outputs/phase2_business/e1b_skewness_synthetic
+note: "synthetic dataset — min_blocks_pct=0 to show full user distribution"

@@ -1,0 +1,15 @@
+# F13 figure — business dataset (synthetic), content-prefix-reuse variant
+# Event definition: content_prefix_reuse
+#   For each single-turn request, only blocks within the contiguous
+#   prefix-hit segment (position 0 .. content_prefix_reuse_blocks-1) form
+#   reuse events.  Equivalent to ideal vLLM APC events.
+# Run: python scripts/generate_f13_business.py configs/phase2_business/f13_synthetic_prefix.yaml
+
+trace_name: business_synthetic
+input_file: data/synthetic/business_synthetic.jsonl
+event_definition: content_prefix_reuse
+block_size: 128
+x_axis_max_minutes: 120
+output_dir: outputs/phase2_business/f13_synthetic_prefix
+figure_variant: content_prefix_reuse
+note: "synthetic dataset — all requests are single-turn (no parent_chat_id)"

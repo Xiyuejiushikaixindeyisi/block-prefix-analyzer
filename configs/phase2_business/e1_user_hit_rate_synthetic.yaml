@@ -1,0 +1,11 @@
+# E1: Per-user ideal prefix hit rate — 4 block_size sweep (synthetic dataset)
+# Produces a 4-curve comparison figure + optional subpanel B.
+# Run: python scripts/generate_user_hit_rate.py configs/phase2_business/e1_user_hit_rate_synthetic.yaml
+
+trace_name: business_synthetic
+input_file: data/synthetic/business_synthetic.jsonl
+block_sizes: 16,32,64,128
+min_blocks_pct: 0.05
+hit_rate_bar_threshold: 0.5
+output_dir: outputs/phase2_business/e1_user_hit_rate_synthetic
+note: "synthetic dataset — 3 reuse patterns (shared-prefix, hot-prompt, cold-start)"

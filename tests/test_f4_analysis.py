@@ -192,6 +192,7 @@ _EXPECTED_METADATA_KEYS = {
     "total_blocks_sum", "hit_blocks_sum", "ideal_overall_hit_ratio",
     "hit_definition", "normalization_rule", "normalization_denom",
     "note_public_adaptation", "figure_variant", "time_axis",
+    "semantic_note",
 }
 
 

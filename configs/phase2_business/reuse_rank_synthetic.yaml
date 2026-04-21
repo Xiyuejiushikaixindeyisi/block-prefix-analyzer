@@ -1,0 +1,8 @@
+# Reuse-rank figure — business dataset (synthetic)
+# Run: python scripts/generate_reuse_rank_business.py configs/phase2_business/reuse_rank_synthetic.yaml
+
+trace_name: business_synthetic
+input_file: data/synthetic/business_synthetic.jsonl
+block_size: 128
+output_dir: outputs/phase2_business/reuse_rank_synthetic
+note: "synthetic dataset — all requests are single-turn"
