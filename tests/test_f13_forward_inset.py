@@ -250,24 +250,43 @@ class TestFollowUpsExcluded:
 
 
 # ---------------------------------------------------------------------------
-# Test 6: Block-set overlap semantics (any shared block counts)
+# Test 6: Prefix-sharing semantics (first block must match)
 # ---------------------------------------------------------------------------
 
-class TestBlockSetOverlap:
-    def test_non_prefix_shared_block_counts(self):
-        """block at position 2 of r2 matches block at position 0 of r1 — still counts."""
-        r1 = _rec(1, 0,  [99])         # block 99 at pos 0
-        r2 = _rec(2, 10, [11, 22, 99]) # block 99 at pos 2 (non-prefix)
+class TestPrefixSharingSemantics:
+    def test_non_prefix_shared_block_does_not_count(self):
+        """block 99 at position 2 of r2 but r2 starts with block 11 — no prefix sharing."""
+        r1 = _rec(1, 0,  [99])          # r1 starts with block 99
+        r2 = _rec(2, 10, [11, 22, 99])  # r2 starts with block 11, not 99
+        fwd = compute_forward_inset([r1, r2])
+        by_id = {r.request_id: r for r in fwd}
+        # r2.block_ids[0]=11 ≠ r1.block_ids[0]=99 → no prefix sharing → not reusable
+        assert by_id["1"].is_reusable_by_future_root is False
+
+    def test_first_block_match_makes_reusable(self):
+        """r2 starts with same first block as r1 → prefix sharing → reusable."""
+        r1 = _rec(1, 0,  [99, 55])        # r1 starts with block 99
+        r2 = _rec(2, 10, [99, 77, 88])    # r2 also starts with block 99
         fwd = compute_forward_inset([r1, r2])
         by_id = {r.request_id: r for r in fwd}
         assert by_id["1"].is_reusable_by_future_root is True
+        # LCP([99,55], [99,77,88]) = 1 (only first block shared)
+        assert by_id["1"].content_reused_block_count == 1
 
-    def test_no_shared_block_means_not_reusable(self):
+    def test_no_shared_first_block_means_not_reusable(self):
         r1 = _rec(1, 0,  [1, 2, 3])
-        r2 = _rec(2, 10, [4, 5, 6])
+        r2 = _rec(2, 10, [4, 5, 6])   # r2.block_ids[0]=4 ≠ r1.block_ids[0]=1
         fwd = compute_forward_inset([r1, r2])
         by_id = {r.request_id: r for r in fwd}
         assert by_id["1"].is_reusable_by_future_root is False
+
+    def test_lcp_longer_than_one_when_prefix_extends(self):
+        """r1=[10,20,30], r2=[10,20,99] → LCP=2, not 1."""
+        r1 = _rec(1, 0,  [10, 20, 30])
+        r2 = _rec(2, 10, [10, 20, 99])
+        fwd = compute_forward_inset([r1, r2])
+        by_id = {r.request_id: r for r in fwd}
+        assert by_id["1"].content_reused_block_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -288,13 +307,14 @@ class TestNumFutureReusers:
         assert by_id["4"].num_future_reusers == 0
 
     def test_distinct_reusers_counted_once_per_request(self):
-        """r1 shares 2 blocks with r2; r2 should be counted once (not twice)."""
+        """r1=[10,20]; r2=[10,20,30] starts with 10 — same first block.
+        LCP([10,20], [10,20,30])=2 → content_reused_block_count=2."""
         r1 = _rec(1, 0,  [10, 20])
-        r2 = _rec(2, 10, [10, 20, 30])  # shares both blocks 10 and 20 with r1
+        r2 = _rec(2, 10, [10, 20, 30])  # starts with 10; LCP with r1 = 2
         fwd = compute_forward_inset([r1, r2])
         by_id = {r.request_id: r for r in fwd}
         assert by_id["1"].num_future_reusers == 1   # r2 counted once
-        assert by_id["1"].content_reused_block_count == 2   # both blocks are reused
+        assert by_id["1"].content_reused_block_count == 2  # max LCP = 2
 
 
 # ---------------------------------------------------------------------------
@@ -310,12 +330,12 @@ class TestFirstFutureReuseDelay:
         assert by_id["1"].first_future_reuse_delay_seconds == pytest.approx(60.0)
         assert by_id["1"].first_reused_by_request_id == "2"
 
-    def test_delay_is_minimum_across_blocks(self):
-        """r1 has blocks [A, B]; r2 (t=10) reuses B; r3 (t=5) reuses A.
-        first_future_reuse_delay should be 5 (r3 is earlier)."""
+    def test_delay_is_earliest_first_block_match(self):
+        """r1 starts with block 100; both r3 (t=5) and r2 (t=10) start with 100.
+        first_future_reuse_delay should be 5.0 (r3 is earlier)."""
         r1 = _rec(1, 0,  [100, 200])
-        r3 = _rec(3, 5,  [200, 999])  # reuses block 200 from r1, earlier than r2
-        r2 = _rec(2, 10, [100, 888])  # reuses block 100 from r1, later than r3
+        r3 = _rec(3, 5,  [100, 999])  # starts with 100, earlier than r2
+        r2 = _rec(2, 10, [100, 888])  # starts with 100, later than r3
         fwd = compute_forward_inset([r1, r2, r3])
         by_id = {r.request_id: r for r in fwd}
         assert by_id["1"].first_future_reuse_delay_seconds == pytest.approx(5.0)

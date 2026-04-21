@@ -1,0 +1,21 @@
+# F14 paper reproduction — multi-turn version of F13 (Trace A only)
+#
+# Source scope: multi-turn requests (sessions with ≥2 requests)
+#   Includes BOTH session roots AND follow-ups of multi-turn sessions.
+#   Complement of single_turn_ids (session length == 1).
+#
+# Main CDF: backward-looking, multi-turn pool only.
+#   For each multi-turn request (chronological): unique blocks that appeared in
+#   any earlier multi-turn request. reuse_time = current.timestamp - last_seen_ts[block_id].
+#   CDF computed over ALL events; x-axis clipped to 0–24 min at plot time.
+#
+# Inset: FORWARD-LOOKING, multi-turn → future single-turn.
+#   Denominator: all multi-turn requests.
+#   Numerator: multi-turn requests with ≥1 block reused by any future single-turn request.
+
+input_file: data/public/qwen_traceA_blksz_16.jsonl
+output_dir: outputs/paper_repro/f14_traceA_public
+trace_name: traceA_public
+x_axis_max_minutes: 24
+figure_variant: multi_turn_forward_reusable_by_future_single_turn
+note_public_adaptation: "2-hour trace-relative window, Trace A only, multi-turn requests"

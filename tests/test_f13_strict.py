@@ -2,12 +2,12 @@
 
 Test areas (10 required):
   1. single-turn identification helpers (root predicate + identify_root_requests)
-  2. Multi-turn roots ARE excluded; only sessions with length==1 are single-turn
+  2. Multi-turn roots ARE excluded from single-turn set; only sessions with length==1
   3. Main CDF uses block-level reusable events, not prefix events
   4. reuse_time uses last_seen semantics
   5. Within-request dedup: repeated block_id counts once
-  6. Inset uses single-turn-only pool (backward-looking)
-  7. Multi-turn follow-ups do NOT update the pool
+  6. Inset uses FORWARD-LOOKING definition (reusable by future single-turn)
+  7. ALL request types update the pool; only single-turn requests generate events
   8. CDF is monotonically non-decreasing per type, range [0, 1]
   9. Output schema: F13Series fields and CSV column names are stable
  10. image -> Multimedia label mapping is correct
@@ -88,16 +88,19 @@ def _rec_no_parent_field(request_id, timestamp, block_ids, req_type="text") -> R
 #   r1 EXCLUDED — it is the root of a 2-request session (has follow-up r2)
 #   r2 EXCLUDED — follow-up (pid=1)
 #
-# Replay (single-turn pool only, r1 and r2 excluded):
-#   r3 t=20: pool empty → 0 events; pool becomes {1:20, 5:20, 6:20}
-#   r4 t=30: pool has {1,5,6}; r4 blocks={7,8,9} → 0 events; pool += {7:30,8:30,9:30}
-#   r5 t=40: pool has {1,5,6,7,8,9}; r5 blocks={1,2,4,10} → eligible={1}
-#            block 2 NOT in pool (r1 excluded); block 4 NOT in pool (r2 excluded)
-#            event: block 1, rt=40-20=20s
+# Replay (all-request pool; r1, r2 update pool but do NOT generate events):
+#   r1 t=0  (multi-turn root): pool → {1:0, 2:0, 3:0}
+#   r2 t=10 (follow-up):       pool → {1:10, 2:10, 3:0, 4:10}
+#   r3 t=20 (single-turn):     blocks={1,5,6}; eligible={1}; 1 event (rt=20-10=10)
+#                               pool → {1:20, 2:10, 3:0, 4:10, 5:20, 6:20}
+#   r4 t=30 (single-turn):     blocks={7,8,9}; eligible={}; 0 events
+#                               pool → adds {7:30, 8:30, 9:30}
+#   r5 t=40 (single-turn):     blocks={1,2,4,10}; eligible={1 (rt=20), 2 (rt=30), 4 (rt=30)}
+#                               3 events; block 10 not in pool
 #
 # Summary:
-#   reuse_events_total = 1  (r5: 1 event)
-#   backward_reusable = {r5}
+#   reuse_events_total = 4  (r3: 1, r5: 3)
+#   backward_reusable = {r3, r5}
 #   single_turn_request_count = 3  (r3, r4, r5)
 #
 # Forward-inset (which single-turn requests are reused by a future single-turn):
@@ -165,19 +168,19 @@ class TestArea2_MultiTurnRootsExcluded:
         assert "11" not in st_ids  # follow-up → excluded
         assert len(st_ids) == 0
 
-    def test_multi_turn_root_not_in_pool(self):
-        # a1: single-turn; b1 root of 2-turn session (b2 follow-up)
-        # b1 is excluded → its blocks do NOT warm the pool
-        # Therefore c1 sees an empty pool and generates no events.
+    def test_multi_turn_root_warms_pool_single_turn_gets_events(self):
+        # a1: single-turn (t=0); b1: multi-turn root (t=10); b2: follow-up (t=20); c1: single-turn (t=30).
+        # All of a1, b1, b2 update the pool. c1 generates events.
         a1 = _rec(1, 0,  [100, 200], parent_chat_id=-1, req_type="text")  # single-turn
         b1 = _rec(2, 10, [100, 300], parent_chat_id=-1, req_type="text")  # multi-turn root
         b2 = _rec(3, 20, [100, 400], parent_chat_id=2,  req_type="text")  # follow-up
         c1 = _rec(4, 30, [100, 200], parent_chat_id=-1, req_type="text")  # single-turn
 
         series = compute_f13_strict_series([a1, b1, b2, c1])
-        # single-turn = {a1, c1} (b1 excluded — multi-turn root)
+        # single-turn = {a1, c1} (b1 excluded — multi-turn root; b2 excluded — follow-up)
         assert series.single_turn_request_count == 2
-        # c1 sees pool from a1 only: {100, 200} → eligible={100, 200} → 2 events
+        # c1 sees pool updated by a1, b1, b2: block 100 last seen at t=20 (b2), block 200 at t=0 (a1).
+        # c1 blocks={100, 200} → eligible={100, 200} → 2 events
         assert series.content_block_reuse_event_count_total == 2
 
 
@@ -278,41 +281,49 @@ class TestArea6_InsetForwardLooking:
         assert total_frac == pytest.approx(expected)
 
     def test_pool_definition_tags(self):
-        assert "single_turn" in POOL_DEFINITION_CDF
+        assert "all" in POOL_DEFINITION_CDF          # all-request pool for CDF
         assert "forward_looking" in POOL_DEFINITION_BREAKDOWN
 
 
 # ===========================================================================
-# Area 7: multi-turn follow-ups do NOT update the pool
+# Area 7: ALL request types update the pool; only single-turn requests generate events.
+# (paper-aligned: reuse_time reflects time since block was last cached by ANY request)
 # ===========================================================================
 
-class TestArea7_FollowUpsExcludedFromPool:
-    def test_block_from_followup_not_counted_as_reusable(self):
-        # r1: root, blocks=[1, 2]
-        # r2: follow-up, blocks=[3, 4]  ← block 3 only from follow-up
-        # r3: root, blocks=[3, 5]       ← block 3 should NOT generate CDF event (r2 not in pool)
+class TestArea7_AllRequestsUpdatePool:
+    def test_followup_warms_pool_for_future_single_turn(self):
+        # r1: multi-turn root (r2 follows); r2: follow-up adds block 3 to pool.
+        # r3: single-turn; block 3 is now in pool from r2 → 1 event.
         r1 = _rec(1, 0,  [1, 2], parent_chat_id=-1)
-        r2 = _rec(2, 10, [3, 4], parent_chat_id=1)   # follow-up
-        r3 = _rec(3, 20, [3, 5], parent_chat_id=-1)  # root
+        r2 = _rec(2, 10, [3, 4], parent_chat_id=1)   # follow-up; warms pool
+        r3 = _rec(3, 20, [3, 5], parent_chat_id=-1)  # single-turn; reuses block 3
         series = compute_f13_strict_series([r1, r2, r3])
-        # CDF: block 3 only appeared in r2 (follow-up), which doesn't update pool → 0 events
-        assert series.content_block_reuse_event_count_total == 0
-        # Forward inset: r1 blocks={1,2} vs r3 blocks={3,5} → no overlap → 0 forward-reusable
-        assert series.forward_reusable_request_count == 0
+        # block 3 last seen at t=10 (r2); r3 reuses it at t=20 → rt=10
+        assert series.content_block_reuse_event_count_total == 1
+        assert series.events[0].reuse_time_seconds == pytest.approx(10.0)
 
-    def test_followup_block_isolated_from_pool(self, base_records):
-        # r5 blocks=[1, 2, 4, 10]
-        # block 2 only in r1 (multi-turn root → excluded from pool)
-        # block 4 only in r2 (follow-up → excluded from pool)
-        # Only block 1 (from r3, single-turn) is in pool when r5 arrives
+    def test_followup_warms_pool_three_hits_in_base_fixture(self, base_records):
+        # With all-request pool: r2 (t=10) adds blocks {1,2,4} to pool.
+        # r5 (single-turn, t=40) sees blocks {1 (ts=20 from r3), 2 (ts=10 from r2),
+        # 4 (ts=10 from r2)} → 3 events.
         series = compute_f13_strict_series(base_records)
         r5_events = [e for e in series.events if e.request_id == "5"]
-        assert len(r5_events) == 1  # only block 1 hits (not block 2 or 4)
+        assert len(r5_events) == 3   # blocks 1, 2, 4 all in pool
+        rts = sorted(e.reuse_time_seconds for e in r5_events)
+        assert rts == pytest.approx([20.0, 30.0, 30.0])  # block1 rt=20, blocks2/4 rt=30
+
+    def test_only_single_turn_requests_generate_events(self):
+        # r1 (multi-turn root) and r2 (follow-up) both warm pool but do NOT generate events.
+        r1 = _rec(1, 0,  [42], parent_chat_id=-1)   # multi-turn root
+        r2 = _rec(2, 10, [42], parent_chat_id=1)    # follow-up
+        r3 = _rec(3, 20, [42], parent_chat_id=-1)   # single-turn → generates event
+        series = compute_f13_strict_series([r1, r2, r3])
+        assert series.content_block_reuse_event_count_total == 1
+        assert series.single_turn_request_count == 1  # only r3
 
     def test_non_single_turn_not_in_count(self, base_records):
         series = compute_f13_strict_series(base_records)
-        # r3, r4, r5 are single-turn (session len==1)
-        # r1 excluded (has follow-up r2); r2 excluded (follow-up)
+        # r3, r4, r5 are single-turn; r1, r2 are multi-turn
         assert series.single_turn_request_count == 3
 
 

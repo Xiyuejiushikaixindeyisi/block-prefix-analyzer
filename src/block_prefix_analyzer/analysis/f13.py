@@ -140,10 +140,14 @@ class F13Series:
         Request-level inset statistics, one row per request type.
     single_turn_request_count:
         Total number of single-turn requests in the trace.
-    request_count_with_reuse:
-        Single-turn requests with at least one reuse event.
-    request_count_without_reuse:
-        Single-turn requests with zero reuse events.
+    forward_reusable_request_count:
+        Single-turn requests whose block content is reused by at least one
+        **later** request (producer/forward-looking direction).  Set by
+        ``compute_f13_strict()``; remains 0 in backward-mode series.
+    backward_event_hit_request_count:
+        Single-turn requests that found at least one block in the historical
+        pool when they arrived (consumer/backward-looking direction).  Set by
+        ``compute_f13_series()``; remains 0 in forward-mode series.
     content_block_reuse_event_count_total:
         Total number of individual reuse events.
     content_block_reuse_event_count_over_56min:
@@ -157,11 +161,11 @@ class F13Series:
     cdf_rows: list[CdfRow]
     breakdown_rows: list[BreakdownRow]
     single_turn_request_count: int
-    request_count_with_reuse: int
-    request_count_without_reuse: int
     content_block_reuse_event_count_total: int
     content_block_reuse_event_count_over_56min: int
     x_axis_max_minutes: float
+    forward_reusable_request_count: int = 0
+    backward_event_hit_request_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -310,11 +314,10 @@ def compute_f13_series(
         cdf_rows=cdf_rows,
         breakdown_rows=breakdown_rows,
         single_turn_request_count=len(single_turn_ids),
-        request_count_with_reuse=len(requests_with_reuse),
-        request_count_without_reuse=len(single_turn_ids) - len(requests_with_reuse),
         content_block_reuse_event_count_total=len(all_events),
         content_block_reuse_event_count_over_56min=over_count,
         x_axis_max_minutes=x_axis_max_minutes,
+        backward_event_hit_request_count=len(requests_with_reuse),
     )
 
 
@@ -454,8 +457,10 @@ def save_metadata_json(
         "type_label_mapping": DEFAULT_TYPE_LABEL_MAPPING,
         "x_axis_max_minutes": series.x_axis_max_minutes,
         "single_turn_request_count": series.single_turn_request_count,
-        "request_count_with_reuse": series.request_count_with_reuse,
-        "request_count_without_reuse": series.request_count_without_reuse,
+        "backward_event_hit_request_count": series.backward_event_hit_request_count,
+        "backward_event_miss_request_count": (
+            series.single_turn_request_count - series.backward_event_hit_request_count
+        ),
         "content_block_reuse_event_count_total": series.content_block_reuse_event_count_total,
         "content_block_reuse_event_count_over_56min": series.content_block_reuse_event_count_over_56min,
         "note_cdf": (

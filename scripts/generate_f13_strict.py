@@ -64,7 +64,7 @@ def run(config: dict[str, str], project_root: Path) -> None:
     total = series.single_turn_request_count
 
     # --- Forward-looking inset (main) ---
-    fwd_count = series.request_count_with_reuse
+    fwd_count = series.forward_reusable_request_count
     fwd_pct = fwd_count / total * 100 if total > 0 else 0.0
 
     # --- Backward-looking diagnostic ---
@@ -78,7 +78,7 @@ def run(config: dict[str, str], project_root: Path) -> None:
     print()
     print(f"  [INSET — FORWARD-LOOKING]")
     print(f"  reusable_by_future_root:            {fwd_count} ({fwd_pct:.1f}%)")
-    print(f"  not_reusable_by_any_future_root:    {series.request_count_without_reuse}")
+    print(f"  not_reusable_by_any_future_root:    {total - fwd_count}")
     print()
     print(f"  [DIAGNOSTIC — BACKWARD-LOOKING any-hit]")
     print(f"  backward_any_hit_count:             {bwd_count} ({bwd_pct:.1f}%)")

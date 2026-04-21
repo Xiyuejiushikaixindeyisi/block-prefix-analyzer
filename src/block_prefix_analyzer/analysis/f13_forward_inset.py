@@ -4,23 +4,35 @@ Semantic
 --------
 For each root request r_i (parent_chat_id == -1), determine whether any
 future root request r_j (timestamp > r_i.timestamp, OR same timestamp but
-higher arrival_index) contains at least one block from r_i.
+higher arrival_index) can reuse r_i's KV cache via prefix sharing.
 
-If yes: r_i is "reusable by a future root request".
+If yes: r_i is "prefix_reusable_by_future_root".
 
 This is the FORWARD-looking direction — the opposite of the backward-looking
 "did this request hit the historical pool?" metric computed in f13_strict.py.
 
-Reusability criterion (V1: block-set overlap)
----------------------------------------------
-r_j "reuses" r_i if:
-    set(r_i.block_ids) ∩ set(r_j.block_ids) ≠ ∅
+Reusability criterion (paper-aligned: prefix sharing)
+------------------------------------------------------
+r_j can reuse r_i's KV cache (at least 1 block) iff:
+    len(r_i.block_ids) > 0  AND
+    len(r_j.block_ids) > 0  AND
+    r_j.block_ids[0] == r_i.block_ids[0]
 
-This is a conservative, interpretable definition: any shared block (at any
-position) counts as reuse.  We do NOT require contiguous-prefix overlap here;
-that would require replaying the trie forward across all future requests and
-would depend on global ordering.  Block-set overlap is symmetric in content
-but applied asymmetrically in time (r_j must be strictly after r_i).
+Rationale: vLLM Automatic Prefix Caching uses chained hashing
+    vllm_hash[p] = H(vllm_hash[p-1], tokens[p], extra_hashes)
+KV block at position p is reusable only if the ENTIRE prefix 0..p matches.
+Therefore the minimum condition for ANY KV reuse is that the first block matches.
+Once the first block matches, the chain can extend; if it does not match, no
+reuse is possible regardless of later blocks.
+
+content_reused_block_count
+    Maximum prefix overlap length with any future consumer starting with the
+    same first block:
+        max(lcp_len(r_i.block_ids, r_j.block_ids)
+            for r_j in future_roots if r_j.block_ids[0] == r_i.block_ids[0])
+    Represents how many consecutive leading blocks of r_i can be reused by
+    the best matching future consumer.  LCP computation is bounded by
+    _MAX_LCP_CONSUMERS for performance.
 
 NOT included in this module
 ----------------------------
@@ -29,8 +41,8 @@ NOT included in this module
 
 Complexity
 ----------
-Build phase: O(Σ_b |root_requests_containing_b|) ≈ O(N * avg_blocks)
-Query phase: O(N * avg_blocks * log(max_roots_per_block))
+Build phase: O(N)  — one entry per root request (first block only)
+Query phase: O(N * log N + N * _MAX_LCP_CONSUMERS * avg_blocks)
 where N = number of root requests.
 """
 from __future__ import annotations
@@ -55,6 +67,18 @@ from block_prefix_analyzer.types import BlockId, RequestRecord, sort_records
 # Sentinels used in binary search (must sort after all real request_ids).
 _TS_SENTINEL = "\xff" * 32
 
+# Maximum number of future consumers to check when computing max prefix length.
+_MAX_LCP_CONSUMERS = 500
+
+
+def _lcp_len(a: list, b: list) -> int:
+    """Length of longest common prefix of sequences a and b."""
+    n = min(len(a), len(b))
+    for k in range(n):
+        if a[k] != b[k]:
+            return k
+    return n
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -77,22 +101,27 @@ class ForwardReuseRecord:
     is_root_request:
         Always True — non-root requests are not included.
     is_reusable_by_future_root:
-        True if at least one future root request contains at least one
-        block from this request.
+        True if at least one future root request starts with the same first
+        block (block_ids[0] matches), i.e., prefix sharing is possible and
+        at least 1 KV block can be reused under vLLM APC semantics.
     first_reused_by_request_id:
-        request_id of the first (earliest-timestamp) future root that
-        reuses at least one block.  None if not reusable.
+        request_id of the earliest future root that starts with the same
+        first block.  None if not reusable.
     first_future_reuse_delay_seconds:
         Delay to first_reused_by_request_id (seconds).  None if not reusable.
     num_future_reusers:
-        Count of distinct future root requests that reuse at least one block.
+        Count of distinct future root requests that start with the same
+        first block (i.e., can reuse at least 1 KV block).
     content_reused_block_count:
-        Number of distinct blocks from this request that appear in any
-        future root request.
+        Maximum prefix overlap length with any future consumer sharing the
+        first block:
+            max(lcp_len(self.block_ids, r_j.block_ids) for r_j in future_roots
+                if r_j.block_ids[0] == self.block_ids[0])
+        Bounded by _MAX_LCP_CONSUMERS future consumers for performance.
     content_reused_block_approx_tokens:
-        Approximate token count of reused blocks (content_reused_block_count * block_size).
-        The last block of the source request may be partial, so this is an
-        upper bound on the true reused token count.
+        Approximate token count of the reusable prefix
+        (content_reused_block_count * block_size).  The last block may be
+        partial, so this is an upper bound on the true reusable token count.
     """
     request_id: str
     timestamp: float
@@ -148,59 +177,96 @@ def compute_forward_inset(
     all_sorted = sort_records(records_list)
     root_recs = [r for r in all_sorted if r.request_id in single_turn_ids]
 
-    # Build: for each block, the sorted list of (timestamp, arrival_index, request_id)
-    # for root requests that contain it.  Sorted by (ts, ai) because root_recs are
-    # already in canonical sort order.
-    block_to_roots: dict[BlockId, list[tuple[float, int, str]]] = defaultdict(list)
+    # Build: rid → block_ids for fast LCP computation.
+    rid_to_blocks: dict[str, list[BlockId]] = {
+        rec.request_id: rec.block_ids for rec in root_recs
+    }
+
+    # Build: first_block → sorted (ts, ai, rid) list for root requests.
+    # Only the first block of each root request is indexed; this is the
+    # necessary and sufficient condition for prefix sharing under vLLM APC.
+    first_block_to_roots: dict[BlockId, list[tuple[float, int, str]]] = defaultdict(list)
     for rec in root_recs:
-        ts = float(rec.timestamp)
-        ai = rec.arrival_index
-        for bid in set(rec.block_ids):
-            block_to_roots[bid].append((ts, ai, rec.request_id))
-    # Already sorted (root_recs is sort_records output); no need to re-sort.
+        if rec.block_ids:
+            first_block_to_roots[rec.block_ids[0]].append(
+                (float(rec.timestamp), rec.arrival_index, rec.request_id)
+            )
+    # Already sorted (root_recs is sort_records output).
 
     result: list[ForwardReuseRecord] = []
 
     for rec in root_recs:
         ts_i = float(rec.timestamp)
         ai_i = rec.arrival_index
-        unique_blocks: set[BlockId] = set(rec.block_ids)
+        req_type = rec.metadata.get("type", "unknown")
+        label = type_label_mapping.get(req_type, req_type)
 
-        first_delay: float | None = None
-        first_reuser: str | None = None
-        future_reusers: set[str] = set()
-        reused_blocks: set[BlockId] = set()
+        if not rec.block_ids:
+            # Empty request: no blocks to share, prefix sharing impossible.
+            result.append(ForwardReuseRecord(
+                request_id=rec.request_id,
+                timestamp=ts_i,
+                request_type=req_type,
+                display_label=label,
+                is_root_request=True,
+                is_reusable_by_future_root=False,
+                first_reused_by_request_id=None,
+                first_future_reuse_delay_seconds=None,
+                num_future_reusers=0,
+                content_reused_block_count=0,
+                content_reused_block_approx_tokens=0,
+            ))
+            continue
 
-        for bid in unique_blocks:
-            occ = block_to_roots.get(bid)
-            if not occ:
-                continue
-            # Binary search: first occurrence with (ts, ai) > (ts_i, ai_i)
-            lo = bisect.bisect_right(occ, (ts_i, ai_i, _TS_SENTINEL))
-            if lo >= len(occ):
-                continue
-            # occ[lo] is the earliest future root request using this block.
-            ts_first, ai_first, rid_first = occ[lo]
-            delay_first = ts_first - ts_i
-            reused_blocks.add(bid)
-            if first_delay is None or delay_first < first_delay:
-                first_delay = delay_first
-                first_reuser = rid_first
-            for _, _, rid in occ[lo:]:
-                future_reusers.add(rid)
+        first_bid = rec.block_ids[0]
+        occ = first_block_to_roots.get(first_bid, [])
+        # Binary search: future roots starting with the same first block.
+        lo = bisect.bisect_right(occ, (ts_i, ai_i, _TS_SENTINEL))
+        future_entries = occ[lo:]
+
+        if not future_entries:
+            result.append(ForwardReuseRecord(
+                request_id=rec.request_id,
+                timestamp=ts_i,
+                request_type=req_type,
+                display_label=label,
+                is_root_request=True,
+                is_reusable_by_future_root=False,
+                first_reused_by_request_id=None,
+                first_future_reuse_delay_seconds=None,
+                num_future_reusers=0,
+                content_reused_block_count=0,
+                content_reused_block_approx_tokens=0,
+            ))
+            continue
+
+        # Earliest future consumer with same first block.
+        ts_first, _, rid_first = future_entries[0]
+        first_delay: float = ts_first - ts_i
+        first_reuser: str = rid_first
+        future_reusers: set[str] = {rid for _, _, rid in future_entries}
+
+        # Max prefix overlap across future consumers (bounded for performance).
+        max_prefix = 0
+        for _, _, rid in future_entries[:_MAX_LCP_CONSUMERS]:
+            lcp = _lcp_len(rec.block_ids, rid_to_blocks.get(rid, []))
+            if lcp > max_prefix:
+                max_prefix = lcp
+            if max_prefix == len(rec.block_ids):
+                break  # perfect match, cannot improve
 
         result.append(ForwardReuseRecord(
             request_id=rec.request_id,
             timestamp=ts_i,
-            request_type=rec.metadata.get("type", "unknown"),
-            display_label=type_label_mapping.get(rec.metadata.get("type", "unknown"), rec.metadata.get("type", "unknown")),
+            request_type=req_type,
+            display_label=label,
             is_root_request=True,
-            is_reusable_by_future_root=len(future_reusers) > 0,
+            is_reusable_by_future_root=True,
             first_reused_by_request_id=first_reuser,
             first_future_reuse_delay_seconds=first_delay,
             num_future_reusers=len(future_reusers),
-            content_reused_block_count=len(reused_blocks),
-            content_reused_block_approx_tokens=len(reused_blocks) * block_size,
+            content_reused_block_count=max_prefix,
+            content_reused_block_approx_tokens=max_prefix * block_size,
         ))
 
     return result

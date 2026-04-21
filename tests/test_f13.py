@@ -288,16 +288,16 @@ def _make_scenario_b():
 def test_reusable_inset_shows_request_with_reuse():
     records = _make_scenario_b()
     series = _compute(records, "content_block_reuse")
-    assert series.request_count_with_reuse == 1
-    assert series.request_count_without_reuse == 0
+    assert series.backward_event_hit_request_count == 1
+    assert (series.single_turn_request_count - series.backward_event_hit_request_count) == 0
 
 
 def test_prefix_inset_shows_no_request_with_reuse():
     records = _make_scenario_b()
     series = _compute(records, "content_prefix_reuse")
     # prefix_hit=0 → no prefix events → no request counted in inset
-    assert series.request_count_with_reuse == 0
-    assert series.request_count_without_reuse == 1
+    assert series.backward_event_hit_request_count == 0
+    assert (series.single_turn_request_count - series.backward_event_hit_request_count) == 1
 
 
 def test_reusable_and_prefix_breakdown_differ():
@@ -306,7 +306,7 @@ def test_reusable_and_prefix_breakdown_differ():
     series_p = _compute(records, "content_prefix_reuse")
     r_counts = [row.count for row in series_r.breakdown_rows]
     p_counts = [row.count for row in series_p.breakdown_rows]
-    assert r_counts != p_counts or series_r.request_count_with_reuse != series_p.request_count_with_reuse
+    assert r_counts != p_counts or series_r.backward_event_hit_request_count != series_p.backward_event_hit_request_count
 
 
 # ---------------------------------------------------------------------------
@@ -372,8 +372,7 @@ def test_f13_series_has_required_fields():
     series = _compute(records, "content_block_reuse")
     assert hasattr(series, "event_definition")
     assert hasattr(series, "single_turn_request_count")
-    assert hasattr(series, "request_count_with_reuse")
-    assert hasattr(series, "request_count_without_reuse")
+    assert hasattr(series, "backward_event_hit_request_count")
     assert hasattr(series, "content_block_reuse_event_count_total")
     assert hasattr(series, "content_block_reuse_event_count_over_56min")
     assert hasattr(series, "x_axis_max_minutes")
@@ -444,8 +443,8 @@ def test_save_metadata_json_required_keys(tmp_path):
     required_keys = [
         "trace_name", "input_file", "event_definition", "single_turn_definition",
         "reuse_time_definition", "dedupe_within_request_rule", "type_label_mapping",
-        "x_axis_max_minutes", "single_turn_request_count", "request_count_with_reuse",
-        "request_count_without_reuse", "content_block_reuse_event_count_total",
+        "x_axis_max_minutes", "single_turn_request_count", "backward_event_hit_request_count",
+        "backward_event_miss_request_count", "content_block_reuse_event_count_total",
         "content_block_reuse_event_count_over_56min", "note_public_adaptation",
     ]
     for key in required_keys:
@@ -512,4 +511,4 @@ def test_cold_start_single_turn_no_events():
     series = _compute([r_st], "content_block_reuse")
     assert series.single_turn_request_count == 1
     assert series.content_block_reuse_event_count_total == 0
-    assert series.request_count_without_reuse == 1
+    assert (series.single_turn_request_count - series.backward_event_hit_request_count) == 1

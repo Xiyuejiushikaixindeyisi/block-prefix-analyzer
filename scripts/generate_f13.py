@@ -62,11 +62,11 @@ def run(config: dict[str, str], project_root: Path) -> None:
     print(f"  single_turn_requests: {series.single_turn_request_count}")
     print(f"  reuse_events_total:   {series.content_block_reuse_event_count_total}")
     print(f"  events_over_56min:    {series.content_block_reuse_event_count_over_56min}")
-    print(f"  requests_with_reuse:  {series.request_count_with_reuse}")
+    print(f"  backward_event_hit_requests: {series.backward_event_hit_request_count}")
 
     variant_label = "content_block_reuse" if event_def == "content_block_reuse" else "prefix-aware"
     reuse_pct = (
-        series.request_count_with_reuse / series.single_turn_request_count * 100
+        series.backward_event_hit_request_count / series.single_turn_request_count * 100
         if series.single_turn_request_count > 0 else 0.0
     )
     title = (

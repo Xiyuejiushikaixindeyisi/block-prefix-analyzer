@@ -52,7 +52,7 @@ REUSE_TIME_DEFINITION = "last_seen__current_ts_minus_last_seen_ts_in_seconds"
 DEDUPE_RULE = "set_dedup__one_event_per_unique_block_per_request"
 # Main inset: forward-looking
 BREAKDOWN_DEFINITION = "forward_looking__root_request_reusable_by_future_root_request"
-POOL_DEFINITION_CDF = "earlier_single_turn_root_requests_only"
+POOL_DEFINITION_CDF = "all_earlier_requests__single_and_multi_turn"
 POOL_DEFINITION_BREAKDOWN = "forward_looking__future_root_requests_only"
 # Diagnostic (old backward-looking any-hit)
 BACKWARD_BREAKDOWN_DEFINITION = "backward_looking__root_request_hits_earlier_root_pool"
@@ -146,11 +146,13 @@ def compute_f13_strict(
 
     Main CDF
     --------
-    Backward-looking, single-turn pool only.  Processing order:
-    1. Query  — which blocks are in the root-request-only pool?
-    2. Yield  — one ReuseEventRow per eligible unique block.
-    3. Insert — update pool (no self-hit).
-    Multi-turn follow-ups are completely skipped (no events, no pool update).
+    Backward-looking, all-request pool.  Processing order (per record):
+    1. If single-turn: query last_seen_ts and yield ReuseEventRows.
+    2. ALL records update last_seen_ts (single-turn + multi-turn roots + follow-ups).
+    Events are generated only for single-turn requests, but the pool reflects
+    the most recent caching of each block across the entire trace — consistent
+    with the paper's definition of reuse time as "time since block was last cached
+    by any request".
 
     Inset (FORWARD-LOOKING)
     -----------------------
@@ -181,26 +183,27 @@ def compute_f13_strict(
     backward_reusable: set[str] = set()
 
     for record in sorted_recs:
-        if record.request_id not in single_turn_ids:
-            continue
-
-        req_type = record.metadata.get("type", "unknown")
-        label = type_label_mapping.get(req_type, req_type)
         unique_blocks: set[BlockId] = set(record.block_ids)
 
-        eligible: set[BlockId] = {bid for bid in unique_blocks if bid in last_seen_ts}
-        for bid in eligible:
-            rt_sec = float(record.timestamp) - last_seen_ts[bid]
-            all_events.append(ReuseEventRow(
-                request_id=record.request_id,
-                request_type=req_type,
-                display_label=label,
-                reuse_time_seconds=rt_sec,
-                reuse_time_minutes=rt_sec / 60.0,
-            ))
-        if eligible:
-            backward_reusable.add(record.request_id)
+        if record.request_id in single_turn_ids:
+            req_type = record.metadata.get("type", "unknown")
+            label = type_label_mapping.get(req_type, req_type)
 
+            eligible: set[BlockId] = {bid for bid in unique_blocks if bid in last_seen_ts}
+            for bid in eligible:
+                rt_sec = float(record.timestamp) - last_seen_ts[bid]
+                all_events.append(ReuseEventRow(
+                    request_id=record.request_id,
+                    request_type=req_type,
+                    display_label=label,
+                    reuse_time_seconds=rt_sec,
+                    reuse_time_minutes=rt_sec / 60.0,
+                ))
+            if eligible:
+                backward_reusable.add(record.request_id)
+
+        # ALL requests update the pool so last_seen_ts reflects the most recent
+        # caching of each block across the entire trace (paper-aligned).
         for bid in unique_blocks:
             last_seen_ts[bid] = float(record.timestamp)
 
@@ -341,6 +344,11 @@ def save_strict_metadata_json(
             "It is NOT the F13 inset value."
         ),
         "note_public_adaptation": note_public_adaptation,
+        "note_pool": (
+            "CDF pool = ALL requests (single-turn + multi-turn). "
+            "last_seen_ts is updated by every request so reuse_time reflects "
+            "time since block was most recently cached by any request — paper-aligned."
+        ),
         "analysis_path": "TraceA replay (Path A) — block_ids from hash_ids, no V2 pipeline",
     }
     path.write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
