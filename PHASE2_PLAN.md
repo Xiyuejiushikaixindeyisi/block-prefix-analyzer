@@ -256,58 +256,152 @@ def save_decoded_csv(rows: list[DecodedNgramRow], path: Path) -> None: ...
 ✅ Step 10 E5：generate_e5_block_text.py + configs/phase2_business/e5_block_text_synthetic.yaml
 
 Phase 2.5（性能，独立分支）
-❌ Step A  index/radix_trie.py（RadixTrieIndex，满足 PrefixIndex 协议）
-❌ Step B  replay.py 新增 index_factory 参数（默认 TrieIndex，向后兼容）
-❌ Step C  性能 benchmark：TrieIndex vs RadixTrieIndex（node_count + memory）
+✅ Step A  index/radix_trie.py（RadixTrieIndex 核心实现）
+✅ Step B  index/trie.py 添加 node_count() 统计方法
+✅ Step C  replay.py 自动选择逻辑（avg_blocks >= 256 时切换 RadixTrieIndex）
+✅ Step D  tests/test_radix_trie.py（38 个测试，正确性 + 等价性 + 压缩比 + auto-select）
+✅ Step E  scripts/benchmark_index.py + YAML config（内存/速度对比）
 ```
 
 ---
 
 ## 6. 性能约束与 Phase 2.5 设计
 
-### 6.1 Trie 内存评估
+### 6.1 Trie 内存评估（实测数字）
 
-| 模型 | 均块数（bs=16） | 最坏节点数 | 估算内存 | Phase 2 可行性 |
-|---|---|---|---|---|
-| QWen-v3-32B-8K | ~150 | ~60M | 2–18 GB | ⚠️ 取决于共享率 |
-| QWen-V3-32B-32K | ~625 | ~62M | 2–18 GB | ⚠️ 同上 |
-| QWen-V3.5-27B-128K | ~5,437 | 极大 | 不可行 | ❌ Phase 2.5 后开放 |
+每个 TrieIndex 节点 ≈ 116 字节（dict 空壳 64B + hash 槽 16B + key int 36B）。
+
+| 场景 | block_size | 平均输入 | 请求数 | TrieIndex | RadixTrieIndex | 压缩比 |
+|---|---|---|---|---|---|---|
+| 8K token 业务请求（128 共享块）| 128 | 8K | 5 万 | **0.37 GB** | 0.04 GB | ~10× |
+| 32K token 业务请求（128 共享块）| 128 | 32K | 5 万 | **1.11 GB** | 0.09 GB | ~12× |
+| 128K long-context（128 共享块）| 128 | 128K | 2 万 | **2.17 GB** | 0.16 GB | ~14× |
 
 ### 6.2 Phase 2 处理策略
 
 1. **按时间窗口切片**：若 `total_block_count > 30M`，改用 24 小时窗口 replay；metadata 注明 `window_hours=24`
 2. **block_size 选择**：Phase 2 主分析用 `block_size=128`（内存更友好，vLLM-Ascend 默认）；`16/32/64` 作为细粒度补充
-3. **不处理平均输入 >32K token 的模型**：推迟 Phase 2.5
+3. **平均输入 >32K token 的模型**：Phase 2.5 完成后解锁，由 `replay()` 自动切换 RadixTrieIndex
 
-### 6.3 RadixTrieIndex 设计（Phase 2.5）
+### 6.3 RadixTrieIndex 实现规格（Phase 2.5）
 
-**内存压缩比**（有长共享前缀时）：
+#### 核心数据结构
 
-| 场景 | TrieIndex | RadixTrieIndex | 压缩比 |
-|---|---|---|---|
-| 500 块共享系统提示词（所有请求复用） | 500 节点 × 300 B = 150 KB | 1 条边 × 4 KB | 37× |
-| 50K 请求 × 5,000 块唯一尾部 | ~75 GB | ~2 GB | 37× |
+```
+RadixTrieIndex
+  └── _root: _RadixNode
+         children: dict[int, (array.array('Q'), _RadixNode)]
+                         ↑              ↑
+                   首个 block_id    边标签（uint64 数组）+ 子节点
+```
 
-**架构保证**：`index/base.py` 的 `PrefixIndex` 协议（`longest_prefix_match` + `insert`）已就绪；
-`RadixTrieIndex` 满足协议后，`replay.py` 和所有分析模块零改动。
+**`_RadixNode`**（`__slots__` 降低单对象开销）：
+```python
+class _RadixNode:
+    __slots__ = ("children",)
+    children: dict[int, tuple[array.array, "_RadixNode"]]
+```
 
-**接口草案**：
+**边标签存储**：`array.array('Q', block_ids_slice)`（unsigned 64-bit integer，8 bytes/element）  
+覆盖 TraceA 小整数（< 2¹⁶）和 SHA-256 截断 uint64 两种 block_id 类型。  
+**仅支持 int block_id**；传入 str 时 `array.array` 构造自动抛 `TypeError`。  
+**不设 `is_terminal` 标记**：`PrefixIndex` 协议只需前缀连续计数，不需要完整序列区分。
+
+#### 两个核心算法
+
+**`longest_prefix_match`**（O(L)，L = 命中 block 数）：
+
+```
+matched = 0, pos = 0
+while pos < len(block_ids):
+    first = block_ids[pos]
+    if first not in node.children: break
+    edge, child = node.children[first]
+    k = common_prefix_length(edge, block_ids, pos)
+    matched += k
+    if k < len(edge): break      # 边部分匹配 → 停止
+    pos += k; node = child        # 全边匹配 → 继续
+return matched
+```
+
+**`insert`**（含边分裂，O(L)）：
+
+```
+while pos < len(block_ids):
+    if first not in node.children:
+        node.children[first] = (array('Q', block_ids[pos:]), new_leaf)
+        return
+    edge, child = node.children[first]
+    k = common_prefix_length(edge, block_ids, pos)
+    if k == len(edge):
+        pos += k; node = child   # 全边匹配 → 继续深入
+    else:
+        split_node = _RadixNode()
+        split_node.children[edge[k]] = (edge[k:], child)   # 旧后缀 → 原孩子
+        if pos + k < n:
+            split_node.children[block_ids[pos+k]] = (array('Q', block_ids[pos+k:]), new_leaf)
+        node.children[first] = (edge[:k], split_node)      # 公共前缀 → split
+        return
+# 若 while 正常退出：所有 blocks 已被现有路径覆盖，无需操作
+```
+
+#### 公开接口
 
 ```python
-# index/radix_trie.py
 class RadixTrieIndex:
-    def longest_prefix_match(self, block_ids: Sequence[BlockId]) -> int: ...
-    def insert(self, block_ids: Sequence[BlockId]) -> None: ...
-    def node_count(self) -> int: ...        # 用于 benchmark
-    def edge_label_bytes(self) -> int: ...  # edge label 总字节数
+    # PrefixIndex 协议（与 TrieIndex 完全等价）
+    def longest_prefix_match(self, block_ids: Sequence[int]) -> int: ...
+    def insert(self, block_ids: Sequence[int]) -> None: ...
 
-# replay.py（新增参数，默认向后兼容）
+    # Benchmark 统计（不在 PrefixIndex 协议内）
+    def node_count(self) -> int:      # _RadixNode 数量（含 root）
+    def edge_count(self) -> int:      # 边数量 = node_count - 1
+    def edge_label_bytes(self) -> int # 所有 edge label 数组的总字节数
+```
+
+`TrieIndex` 同步添加 `node_count() -> int`（迭代 DFS，不用递归，避免深链栈溢出）。
+
+#### replay.py 自动切换逻辑
+
+```python
+_RADIX_THRESHOLD_AVG_BLOCKS: int = 256  # 对应 bs=128 时 32K chars/tokens 的均值
+
+def _auto_index_factory(records: list[RequestRecord]) -> type:
+    if not records:
+        return TrieIndex
+    avg = sum(len(r.block_ids) for r in records) / len(records)
+    return RadixTrieIndex if avg >= _RADIX_THRESHOLD_AVG_BLOCKS else TrieIndex
+
 def replay(
     records: Iterable[RequestRecord],
-    *,
-    index_factory: Callable[[], PrefixIndex] = TrieIndex,
-) -> Iterator[PerRequestResult]: ...
+    index_factory: IndexFactory | None = None,   # None → 自动选择
+) -> Iterator[PerRequestResult]:
+    sorted_records = sort_records(list(records))
+    if index_factory is None:
+        index_factory = _auto_index_factory(sorted_records)
+    ...
 ```
+
+**阈值说明**：256 blocks 对应 bs=128 时均值 32K chars（CharTokenizer：1 char = 1 token）。  
+bs=16 时触发更早（均值 4K chars），但内存压缩同样有效，属于安全保守策略。
+
+#### Benchmark 设计
+
+**脚本**：`scripts/benchmark_index.py`  
+**指标**：tracemalloc 峰值内存、replay 耗时、node_count、edge_label_bytes、命中率一致性（硬断言）  
+**输出**：终端对比表格 + `metadata.json`  
+**Config 驱动**：YAML 指定 `input_file`、`block_size`、`output_dir`
+
+#### 文件清单
+
+| 操作 | 文件 |
+|---|---|
+| 新建 | `src/block_prefix_analyzer/index/radix_trie.py` |
+| 新建 | `tests/test_radix_trie.py` |
+| 新建 | `scripts/benchmark_index.py` |
+| 新建 | `configs/phase2_business/benchmark_index_synthetic.yaml` |
+| 修改 | `src/block_prefix_analyzer/index/trie.py`（添加 `node_count()`）|
+| 修改 | `src/block_prefix_analyzer/replay.py`（`index_factory=None` + 自动选择）|
 
 ---
 
@@ -324,19 +418,21 @@ outputs/
     e1_user_hit_rate_*/
     e1b_skewness_*/
     e5_block_text_*/  # E5：文本还原（top_ngrams decoded text）
+  benchmark_index_*/  # Phase 2.5 benchmark 输出
 ```
 
 ---
 
 ## 8. 测试状态
 
-当前测试套件：**632 passed，10 xfailed**（xfail 为 Layer-2/3 pending 占位，符合预期）。
+当前测试套件：**670 passed，10 xfailed**（xfail 为 Layer-2/3 pending 占位，符合预期）。
 
 | 测试文件 | 覆盖模块 | 用例数 |
 |---|---|---|
 | `test_business_loader.py` | `io/business_loader.py` | 28 |
 | `test_request_classifier.py` | `analysis/request_classifier.py` | 22 |
 | `test_block_text_decoder.py` | `analysis/block_text_decoder.py` + loader registry | 16 |
+| `test_radix_trie.py` | `index/radix_trie.py` + `trie.py` + `replay.py` auto-select | 38 |
 | 其余已有测试 | V1 + V2 全模块 | 566 |
 
 每个核心模块有独立测试文件，fixture 为手工构造最小值，不依赖真实数据集。
