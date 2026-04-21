@@ -77,3 +77,18 @@ class TrieIndex:
             if bid not in node:
                 node[bid] = {}
             node = node[bid]
+
+    def node_count(self) -> int:
+        """Return the total number of trie nodes (including the root node).
+
+        Uses iterative DFS to avoid hitting Python's recursion limit on deeply
+        nested single-child chains.  Primarily used for benchmark comparisons
+        with :class:`~block_prefix_analyzer.index.radix_trie.RadixTrieIndex`.
+        """
+        count = 0
+        stack = [self._root]
+        while stack:
+            node = stack.pop()
+            count += 1
+            stack.extend(node.values())
+        return count

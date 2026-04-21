@@ -1,0 +1,8 @@
+# Phase 2.5 Benchmark: TrieIndex vs RadixTrieIndex (synthetic dataset)
+# Run: python scripts/benchmark_index.py configs/phase2_business/benchmark_index_synthetic.yaml
+
+trace_name: business_synthetic
+input_file: data/synthetic/business_synthetic.jsonl
+block_size: 128
+output_dir: outputs/phase2_business/benchmark_index_synthetic
+note: "synthetic dataset — avg 2.8 blocks/req; TrieIndex expected to win on small data"

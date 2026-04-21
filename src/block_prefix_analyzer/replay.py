@@ -70,6 +70,32 @@ from .index.base import PrefixIndex
 from .index.trie import TrieIndex
 from .types import BlockId, RequestRecord, sort_records
 
+# ---------------------------------------------------------------------------
+# Auto index-factory selection
+# ---------------------------------------------------------------------------
+
+# Average blocks-per-request threshold above which RadixTrieIndex is chosen
+# automatically.  256 blocks ≈ 32 K chars at block_size=128 (CharTokenizer:
+# 1 char = 1 token).  At smaller block sizes the threshold is hit earlier
+# (e.g. bs=16 → 4 K chars), which is still correct: Radix is always safe and
+# reduces memory pressure for long-context workloads.
+_RADIX_THRESHOLD_AVG_BLOCKS: int = 256
+
+
+def _auto_index_factory(records: list[RequestRecord]) -> type:
+    """Pick TrieIndex or RadixTrieIndex based on average blocks per request.
+
+    Importing RadixTrieIndex is deferred to avoid the import cost on the
+    common short-context path.
+    """
+    if not records:
+        return TrieIndex
+    avg = sum(len(r.block_ids) for r in records) / len(records)
+    if avg >= _RADIX_THRESHOLD_AVG_BLOCKS:
+        from .index.radix_trie import RadixTrieIndex  # deferred import
+        return RadixTrieIndex
+    return TrieIndex
+
 
 @dataclass
 class PerRequestResult:
@@ -117,7 +143,7 @@ IndexFactory = Callable[[], PrefixIndex]
 
 def replay(
     records: Iterable[RequestRecord],
-    index_factory: IndexFactory = TrieIndex,
+    index_factory: IndexFactory | None = None,
 ) -> Iterator[PerRequestResult]:
     """Replay records in canonical order, yielding one result per record.
 
@@ -134,8 +160,18 @@ def replay(
     index_factory:
         Zero-arg callable returning a fresh
         :class:`~block_prefix_analyzer.index.base.PrefixIndex`.
-        Defaults to :class:`~block_prefix_analyzer.index.trie.TrieIndex`.
-        Override in tests to inject a spy or alternative implementation.
+
+        Pass ``None`` (default) to let the engine choose automatically:
+
+        * Average blocks per request **< 256** → uses
+          :class:`~block_prefix_analyzer.index.trie.TrieIndex` (original
+          behaviour; no import overhead).
+        * Average blocks per request **≥ 256** (≈ 32 K tokens at bs=128) →
+          uses :class:`~block_prefix_analyzer.index.radix_trie.RadixTrieIndex`
+          to avoid multi-GB memory usage on long-context workloads.
+
+        Pass an explicit factory (e.g. ``index_factory=TrieIndex``) to
+        override auto-selection — useful in tests or benchmarks.
 
     Yields
     ------
@@ -143,6 +179,8 @@ def replay(
         One result per input record, emitted in canonical sort order.
     """
     sorted_records = sort_records(list(records))
+    if index_factory is None:
+        index_factory = _auto_index_factory(sorted_records)
     index: PrefixIndex = index_factory()
     seen_blocks: set[BlockId] = set()
 
