@@ -62,7 +62,12 @@ class MetricsSummary:
     non_empty_request_count:
         Number of records with ``total_blocks > 0``.
     cold_start_request_count:
-        Number of records with ``content_prefix_reuse_blocks == 0``.
+        Proxy metric: number of records where ``content_prefix_reuse_blocks == 0``.
+        Under content-hash semantics (TraceA) this is **not** strictly equivalent to
+        a true cold-start: a request whose first block was never seen before *will*
+        be counted here, but so will a request whose first block *was* seen before
+        yet happens to be out-of-order (non-prefix) in position 0.  Treat as an
+        approximate lower-bound on true cold-starts.
     total_blocks:
         Sum of ``total_blocks`` over **non-empty** requests only.
         This is the denominator used for both ratio metrics.

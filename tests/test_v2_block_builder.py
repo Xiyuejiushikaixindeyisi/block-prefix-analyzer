@@ -163,3 +163,54 @@ def test_custom_hash_function_is_called() -> None:
 def test_block_size_attribute_matches_constructor() -> None:
     b = SimpleBlockBuilder(block_size=32)
     assert b.block_size == 32
+
+
+# ---------------------------------------------------------------------------
+# ChainedBlockBuilder — construction, block_size validation, initial_hash
+# ---------------------------------------------------------------------------
+
+def _fake_hash(tokens: list[int], prev: int) -> int:
+    return sum(tokens) ^ prev
+
+
+def test_chained_block_size_zero_raises() -> None:
+    with pytest.raises(ValueError, match="block_size"):
+        from block_prefix_analyzer.v2.adapters.siphash_builder import ChainedBlockBuilder
+        ChainedBlockBuilder(block_size=0, hash_fn=_fake_hash)
+
+
+def test_chained_block_size_negative_raises() -> None:
+    with pytest.raises(ValueError, match="block_size"):
+        from block_prefix_analyzer.v2.adapters.siphash_builder import ChainedBlockBuilder
+        ChainedBlockBuilder(block_size=-1, hash_fn=_fake_hash)
+
+
+def test_chained_block_size_attribute_accessible() -> None:
+    from block_prefix_analyzer.v2.adapters.siphash_builder import ChainedBlockBuilder
+    b = ChainedBlockBuilder(block_size=32, hash_fn=_fake_hash)
+    assert b.block_size == 32
+
+
+def test_chained_initial_hash_zero_affects_first_block() -> None:
+    from block_prefix_analyzer.v2.adapters.siphash_builder import ChainedBlockBuilder
+    b0 = ChainedBlockBuilder(block_size=2, hash_fn=_fake_hash, initial_hash=0)
+    b1 = ChainedBlockBuilder(block_size=2, hash_fn=_fake_hash, initial_hash=999)
+    tokens = [1, 2, 3, 4]
+    r0 = b0.build(tokens)
+    r1 = b1.build(tokens)
+    # Different initial_hash → different first block hash → different all block hashes
+    assert r0.block_ids != r1.block_ids
+
+
+def test_chained_initial_hash_propagates_through_all_blocks() -> None:
+    """Changing initial_hash must affect every subsequent block due to chaining."""
+    from block_prefix_analyzer.v2.adapters.siphash_builder import ChainedBlockBuilder
+    b0 = ChainedBlockBuilder(block_size=2, hash_fn=_fake_hash, initial_hash=0)
+    b1 = ChainedBlockBuilder(block_size=2, hash_fn=_fake_hash, initial_hash=1)
+    tokens = [10, 20, 30, 40, 50, 60]  # 3 blocks
+    r0 = b0.build(tokens)
+    r1 = b1.build(tokens)
+    assert len(r0.block_ids) == 3
+    # All three blocks must differ (not just the first)
+    for bid0, bid1 in zip(r0.block_ids, r1.block_ids):
+        assert bid0 != bid1

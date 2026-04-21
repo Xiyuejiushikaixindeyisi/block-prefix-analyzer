@@ -26,14 +26,36 @@ Two distinct reuse semantics
     Counts only the **contiguous prefix from the start of the request**
     that matches a path already in the prefix index.  Once the first block
     position fails to match, all later positions are non-hits even if the
-    individual block ids were seen before.  This is the stricter, main metric.
+    individual block ids were seen before.
+
+    **Equivalence to vLLM APC (infinite capacity, same model)**:
+    vLLM Automatic Prefix Caching uses chained hashing:
+    ``block_hash[i] = H(block_hash[i-1], tuple(tokens[i*B:(i+1)*B]), extra_keys)``.
+    Only blocks whose entire prefix chain matches share a physical KV block.
+    Note: KV tensors depend on both token IDs and model weights; KV reuse is
+    only valid within a single model deployment.  vLLM isolates KV caches
+    per model via process-level BlockPool separation, not via hash fields
+    (``extra_keys`` contains LoRA ID / multimodal identifiers / cache_salt,
+    but does NOT contain model name or dtype).
+
+    TraceA ``hash_ids`` are Salted SipHash-2-4(16 tokens) — a collision-free
+    per-block content hash.  No tokenizer step is needed to use this metric:
+    vLLM also hashes tokens directly, so comparing hash_ids is sufficient.
+    Matching prefix hash_ids implies identical prefix token content, which by
+    induction implies identical vLLM chained hashes (same-model assumption).
+    Therefore ``content_prefix_reuse_blocks`` is the exact equivalent of the
+    number of blocks that would hit an **infinite-capacity, same-model** vLLM
+    prefix cache.  Finite-capacity (LRU/LFU eviction) hit counts are bounded
+    above by this value.
 
 ``content_reused_blocks_anywhere``
     Counts **every position** in the current request whose block id appeared
     in *any* earlier request, regardless of contiguity.  If block id ``A``
     was seen before and the current request is ``[A, A, B]``, both ``A``
-    positions count (``content_reused_blocks_anywhere == 2``), even if ``B`` has never
-    appeared before.  This is the looser, auxiliary metric.
+    positions count (``content_reused_blocks_anywhere == 2``), even if ``B``
+    has never appeared before.  This metric does NOT correspond to vLLM
+    prefix cache hit because non-prefix block matches do not produce hits
+    in vLLM's chained-key scheme.
 
 This module is intentionally narrow.  It produces raw per-request results
 only; metric aggregation belongs in :mod:`block_prefix_analyzer.metrics`.

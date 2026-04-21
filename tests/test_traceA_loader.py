@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from block_prefix_analyzer.io.jsonl_loader import LoadError
-from block_prefix_analyzer.io.traceA_loader import load_traceA_jsonl
+from block_prefix_analyzer.io.traceA_loader import TRACE_A_BLOCK_SIZE, load_traceA_jsonl
 
 
 def _write_jsonl(path: Path, records: list[dict]) -> None:
@@ -137,5 +137,52 @@ def test_blank_lines_skipped(tmp_path: Path) -> None:
 def test_empty_hash_ids_allowed(tmp_path: Path) -> None:
     p = tmp_path / "trace.jsonl"
     _write_jsonl(p, [{"chat_id": 1, "timestamp": 0.0, "hash_ids": []}])
+    records = load_traceA_jsonl(p)
+    assert records[0].block_ids == []
+
+
+# ---------------------------------------------------------------------------
+# block_size and tail-block truncation
+# ---------------------------------------------------------------------------
+
+def test_block_size_set_on_all_records(tmp_path: Path) -> None:
+    p = tmp_path / "trace.jsonl"
+    _write_jsonl(p, _MINIMAL)
+    records = load_traceA_jsonl(p)
+    for r in records:
+        assert r.block_size == TRACE_A_BLOCK_SIZE
+
+
+def test_tail_block_stripped_when_token_count_available(tmp_path: Path) -> None:
+    # 35 tokens / 16 = 2 full blocks; the 3rd hash_id is the partial tail block
+    p = tmp_path / "trace.jsonl"
+    _write_jsonl(p, [{"chat_id": 1, "timestamp": 0.0,
+                      "input_length": 35, "hash_ids": [100, 200, 300]}])
+    records = load_traceA_jsonl(p)
+    assert records[0].block_ids == [100, 200]
+    assert records[0].token_count == 35
+
+
+def test_no_truncation_when_token_count_absent(tmp_path: Path) -> None:
+    p = tmp_path / "trace.jsonl"
+    _write_jsonl(p, [{"chat_id": 1, "timestamp": 0.0, "hash_ids": [10, 20, 30]}])
+    records = load_traceA_jsonl(p)
+    assert records[0].block_ids == [10, 20, 30]
+
+
+def test_no_truncation_when_tokens_exactly_divisible(tmp_path: Path) -> None:
+    # 32 tokens / 16 = exactly 2 full blocks — no tail block to strip
+    p = tmp_path / "trace.jsonl"
+    _write_jsonl(p, [{"chat_id": 1, "timestamp": 0.0,
+                      "input_length": 32, "hash_ids": [100, 200]}])
+    records = load_traceA_jsonl(p)
+    assert records[0].block_ids == [100, 200]
+
+
+def test_all_blocks_stripped_when_token_count_less_than_block_size(tmp_path: Path) -> None:
+    # 10 tokens → 0 full blocks; the single hash_id is entirely tail
+    p = tmp_path / "trace.jsonl"
+    _write_jsonl(p, [{"chat_id": 1, "timestamp": 0.0,
+                      "input_length": 10, "hash_ids": [999]}])
     records = load_traceA_jsonl(p)
     assert records[0].block_ids == []

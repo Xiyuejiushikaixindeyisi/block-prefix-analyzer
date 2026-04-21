@@ -59,7 +59,19 @@ class ChainedBlockBuilder:
         Defaults to :func:`_mmh3_chained_hash`; override for testing without
         the ``mmh3`` dependency.
     initial_hash:
-        Seed for the first block's hash.  vLLM uses ``0``.
+        Seed for the first block's hash.
+
+        **Analysis default (``0``)**: Any fixed, consistent seed produces
+        correct *relative* prefix-reuse statistics within a single dataset.
+        Using ``0`` is fine for measuring hit rates.
+
+        **Cross-system alignment**: vLLM's actual ``NONE_HASH`` is *not* ``0``.
+        It is derived from ``PYTHONHASHSEED`` if set, otherwise from
+        ``os.urandom(32)`` — a per-process random value, not a fixed constant.
+        To reproduce the exact block IDs of a specific vLLM deployment,
+        obtain its ``NONE_HASH`` value and pass it here.  Without that value,
+        the block IDs computed by this class will differ from vLLM's, even
+        though the prefix-reuse analysis results (hit rates) remain accurate.
     """
 
     def __init__(

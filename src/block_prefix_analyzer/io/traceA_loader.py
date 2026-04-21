@@ -2,7 +2,7 @@
 
 Maps external trace field names to the internal RequestRecord model:
   chat_id         → request_id  (str)
-  hash_ids        → block_ids   (list[int])
+  hash_ids        → block_ids   (list[int], tail block stripped when token_count known)
   timestamp       → timestamp
   parent_chat_id  → metadata["parent_chat_id"]  (V2+)
   type            → metadata["type"]             (V2+)
@@ -10,8 +10,13 @@ Maps external trace field names to the internal RequestRecord model:
   input_length    → token_count (optional)
   output_length   → metadata["output_length"]
 
-The core loader (jsonl_loader.py) is not modified; this module is the
-thin adapter for TraceA-specific field names.
+Tail-block truncation
+---------------------
+vLLM APC only caches *complete* blocks (token count == block_size).  Partial
+tail blocks are never hashed or stored in the KV cache.  When ``input_length``
+is present, the loader truncates ``block_ids`` to ``input_length // block_size``
+entries so that downstream prefix-hit calculations match vLLM semantics.
+If ``input_length`` is absent the full ``hash_ids`` list is kept as-is.
 """
 from __future__ import annotations
 
@@ -20,6 +25,9 @@ from pathlib import Path
 
 from block_prefix_analyzer.io.jsonl_loader import LoadError
 from block_prefix_analyzer.types import RequestRecord, sort_records
+
+TRACE_A_BLOCK_SIZE = 16
+"""Token block size used when the TraceA dataset was pre-processed (blksz_16)."""
 
 _TRACEА_EXTRA_FIELDS = ("parent_chat_id", "type", "turn", "output_length")
 
@@ -56,6 +64,15 @@ def load_traceA_jsonl(path: Path | str) -> list[RequestRecord]:
             if not isinstance(hash_ids, list):
                 raise LoadError(lineno, "'hash_ids' must be a list")
 
+            token_count = obj.get("input_length")
+
+            # Strip partial tail block: vLLM only caches full blocks.
+            if token_count is not None:
+                full_blocks = token_count // TRACE_A_BLOCK_SIZE
+                block_ids: list = hash_ids[:full_blocks]
+            else:
+                block_ids = hash_ids
+
             metadata: dict = {}
             for key in _TRACEА_EXTRA_FIELDS:
                 if key in obj:
@@ -65,8 +82,9 @@ def load_traceA_jsonl(path: Path | str) -> list[RequestRecord]:
                 request_id=str(obj["chat_id"]),
                 timestamp=ts,
                 arrival_index=arrival_index,
-                block_ids=hash_ids,
-                token_count=obj.get("input_length"),
+                block_ids=block_ids,
+                token_count=token_count,
+                block_size=TRACE_A_BLOCK_SIZE,
                 metadata=metadata,
             ))
             arrival_index += 1

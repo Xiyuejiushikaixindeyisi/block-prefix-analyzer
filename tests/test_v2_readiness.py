@@ -381,7 +381,7 @@ class TestC6_SessionCategorySemantics:
                        [Message(role="user", content="other")],
                        session_id="s2", turn=1),
         ]
-        return build_block_records_from_raw_requests(raw)
+        return build_block_records_from_raw_requests(raw, block_size=1)
 
     def test_root_request_identified(self):
         records = self._make_session_records()
@@ -406,7 +406,7 @@ class TestC6_SessionCategorySemantics:
         raw = [RawRequest("r1", 0.0,
                           [Message(role="user", content="x")],
                           category="text-1")]
-        records = build_block_records_from_raw_requests(raw)
+        records = build_block_records_from_raw_requests(raw, block_size=1)
         assert get_category(records[0]) == "text-1"
 
 

@@ -7,6 +7,8 @@ All tests use hand-constructed inputs; no I/O, no network, no randomness.
 """
 from __future__ import annotations
 
+import pytest
+
 from block_prefix_analyzer.metrics import compute_metrics
 from block_prefix_analyzer.replay import replay
 from block_prefix_analyzer.types import RequestRecord
@@ -48,43 +50,48 @@ def _make_multiturn(request_id: str, timestamp: float) -> RawRequest:
 # Single request → RequestRecord
 # ---------------------------------------------------------------------------
 
+def test_missing_block_size_raises_value_error() -> None:
+    raw = [_make_raw("r1", 0.0)]
+    with pytest.raises(ValueError, match="block_size"):
+        build_block_records_from_raw_requests(raw)
+
+
 def test_single_request_produces_one_record() -> None:
     raw = [_make_raw("r1", 0.0)]
-    records = build_block_records_from_raw_requests(raw)
+    records = build_block_records_from_raw_requests(raw, block_size=16)
     assert len(records) == 1
     assert isinstance(records[0], RequestRecord)
 
 
 def test_output_record_request_id_matches() -> None:
     raw = [_make_raw("my-request", 0.0)]
-    records = build_block_records_from_raw_requests(raw)
+    records = build_block_records_from_raw_requests(raw, block_size=16)
     assert records[0].request_id == "my-request"
 
 
 def test_output_record_timestamp_matches() -> None:
     raw = [_make_raw("r1", 42.5)]
-    records = build_block_records_from_raw_requests(raw)
+    records = build_block_records_from_raw_requests(raw, block_size=16)
     assert records[0].timestamp == 42.5
 
 
 def test_output_record_has_block_ids() -> None:
-    # "hello" rendered through MinimalChatTemplate + CharTokenizer + block_size=16
-    # Rendered: "<|user|>\nhello\n<|assistant|>" = enough chars for at least one block
-    raw = [_make_raw("r1", 0.0, content="a" * 100)]  # long content → many blocks
-    records = build_block_records_from_raw_requests(raw)
+    # long content → many blocks
+    raw = [_make_raw("r1", 0.0, content="a" * 100)]
+    records = build_block_records_from_raw_requests(raw, block_size=16)
     assert len(records[0].block_ids) > 0
 
 
 def test_output_record_block_ids_are_ints() -> None:
     raw = [_make_raw("r1", 0.0, content="hello world")]
-    records = build_block_records_from_raw_requests(raw)
+    records = build_block_records_from_raw_requests(raw, block_size=16)
     for bid in records[0].block_ids:
         assert isinstance(bid, int)
 
 
 def test_output_record_token_count_set() -> None:
     raw = [_make_raw("r1", 0.0)]
-    records = build_block_records_from_raw_requests(raw)
+    records = build_block_records_from_raw_requests(raw, block_size=16)
     assert records[0].token_count is not None
     assert records[0].token_count > 0
 
@@ -95,14 +102,14 @@ def test_output_record_token_count_set() -> None:
 
 def test_block_ids_are_deterministic() -> None:
     raw = [_make_raw("r1", 0.0, content="same content")]
-    r1 = build_block_records_from_raw_requests(raw)
-    r2 = build_block_records_from_raw_requests(raw)
+    r1 = build_block_records_from_raw_requests(raw, block_size=16)
+    r2 = build_block_records_from_raw_requests(raw, block_size=16)
     assert r1[0].block_ids == r2[0].block_ids
 
 
 def test_different_content_different_block_ids() -> None:
-    r1 = build_block_records_from_raw_requests([_make_raw("r1", 0.0, content="a" * 100)])
-    r2 = build_block_records_from_raw_requests([_make_raw("r1", 0.0, content="b" * 100)])
+    r1 = build_block_records_from_raw_requests([_make_raw("r1", 0.0, content="a" * 100)], block_size=16)
+    r2 = build_block_records_from_raw_requests([_make_raw("r1", 0.0, content="b" * 100)], block_size=16)
     assert r1[0].block_ids != r2[0].block_ids
 
 
@@ -116,7 +123,7 @@ def test_output_is_sorted_by_timestamp() -> None:
         _make_raw("r1", 10.0),
         _make_raw("r2", 20.0),
     ]
-    records = build_block_records_from_raw_requests(raw)
+    records = build_block_records_from_raw_requests(raw, block_size=16)
     timestamps = [r.timestamp for r in records]
     assert timestamps == sorted(timestamps)
 
@@ -127,7 +134,7 @@ def test_output_is_sorted_by_timestamp() -> None:
 
 def test_debug_metadata_included_by_default() -> None:
     raw = [_make_raw("r1", 0.0)]
-    records = build_block_records_from_raw_requests(raw)
+    records = build_block_records_from_raw_requests(raw, block_size=16)
     meta = records[0].metadata
     assert "v2_rendered_prompt" in meta
     assert "v2_token_count" in meta
@@ -138,7 +145,7 @@ def test_debug_metadata_included_by_default() -> None:
 
 def test_debug_metadata_disabled() -> None:
     raw = [_make_raw("r1", 0.0)]
-    records = build_block_records_from_raw_requests(raw, include_debug_metadata=False)
+    records = build_block_records_from_raw_requests(raw, block_size=16, include_debug_metadata=False)
     meta = records[0].metadata
     assert "v2_rendered_prompt" not in meta
     assert "v2_token_count" not in meta
@@ -146,19 +153,19 @@ def test_debug_metadata_disabled() -> None:
 
 def test_rendered_prompt_in_metadata_is_string() -> None:
     raw = [_make_raw("r1", 0.0)]
-    records = build_block_records_from_raw_requests(raw)
+    records = build_block_records_from_raw_requests(raw, block_size=16)
     assert isinstance(records[0].metadata["v2_rendered_prompt"], str)
 
 
 def test_tokenizer_name_recorded_in_metadata() -> None:
     raw = [_make_raw("r1", 0.0)]
-    records = build_block_records_from_raw_requests(raw, tokenizer=CharTokenizer())
+    records = build_block_records_from_raw_requests(raw, block_size=16, tokenizer=CharTokenizer())
     assert records[0].metadata["v2_tokenizer"] == "char_tokenizer"
 
 
 def test_chat_template_name_recorded_in_metadata() -> None:
     raw = [_make_raw("r1", 0.0)]
-    records = build_block_records_from_raw_requests(raw, chat_template=MinimalChatTemplate())
+    records = build_block_records_from_raw_requests(raw, block_size=16, chat_template=MinimalChatTemplate())
     assert records[0].metadata["v2_chat_template"] == "minimal_chat_template"
 
 
@@ -176,7 +183,7 @@ def test_session_fields_forwarded_to_metadata() -> None:
         category="text-1",
         turn=2,
     )]
-    records = build_block_records_from_raw_requests(raw)
+    records = build_block_records_from_raw_requests(raw, block_size=16)
     meta = records[0].metadata
     assert meta["parent_request_id"] == "r0"
     assert meta["session_id"] == "sess-1"
