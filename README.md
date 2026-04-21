@@ -2,7 +2,7 @@
 
 离线分析 LLM 请求 trace 中 **block 级前缀复用** 的工具。
 
-当前状态：**V1 完整 + V2-min 完整 + V2-full 指标完整 + Readiness Gate 通过 — 421 个测试全部通过（10 个 xfail 为预期 pending）**。
+当前状态：**V1 完整 + V2-min 完整 + Phase 2 全部完成 — 632 个测试全部通过（10 个 xfail 为预期 pending）**。
 
 ## 设计目标
 - 给定按时间排序的请求流，回放并输出：
@@ -379,6 +379,365 @@ outputs/paper_repro/f4_traceA_public/
 
 ---
 
+---
+
+## 业务数据集分析（Phase 2）
+
+> 适用场景：数据集仅含已渲染的原始 prompt，无预计算 `hash_ids`。
+> 加载器使用 `CharTokenizer`（1 字符 = 1 token）+ `SimpleBlockBuilder`（SHA-256 独立哈希）生成 block_ids，无需外部 tokenizer 或哈希库。
+> **当前阶段的 block_ids 与实际 vLLM 部署的 block_ids 值不同，但命中率统计结论在同一数据集内部一致有效。**
+
+---
+
+### 数据集接入：三步走
+
+#### Step 1 — 准备数据文件
+
+**放置位置（推荐）**：
+
+```
+data/
+  internal/              # 已加入 .gitignore，不上传到 git
+    <dataset_name>.jsonl
+```
+
+将数据文件放到 `data/internal/`，例如：
+
+```bash
+cp /path/to/your/requests.jsonl data/internal/prod_requests.jsonl
+```
+
+**JSONL 格式**：每行一条 JSON 对象，字段如下：
+
+| 字段 | 类型 | 是否必填 | 说明 |
+|---|---|---|---|
+| `user_id` | str / int | **必填** | 租户 / 用户标识，用于按用户聚合命中率 |
+| `request_id` | str | **必填** | 请求唯一标识，重复出现视为 Agent session（当前阶段过滤） |
+| `timestamp` | float（秒）| **必填** | 请求到达时间，用于时序排序和 reuse_time 计算 |
+| `raw_prompt` | str | **必填** | 完整渲染后的 prompt 原文（已经过 chat template 处理，直接入 block 分析） |
+
+示例行：
+
+```json
+{"user_id": "tenant_42", "request_id": "req_001", "timestamp": 1700000000.0, "raw_prompt": "You are a helpful assistant.\n\nUser: How do I query Elasticsearch?\nAssistant:"}
+```
+
+**字段名重映射**（若源文件字段名不同）：
+
+在 YAML config 中（或 Python 代码中）使用 `field_map` 参数：
+
+```yaml
+field_map:
+  user_id: tenant_id        # 源文件用 "tenant_id" 表示 user_id
+  request_id: chat_id       # 源文件用 "chat_id" 表示 request_id
+  raw_prompt: prompt        # 源文件用 "prompt" 表示 raw_prompt
+```
+
+> 注意：当前 `_load_flat_yaml` 仅支持单层 key: value，`field_map` 需通过 Python 直接调用 `load_business_jsonl(field_map={...})` 传入，或等待 Phase 3 扩展 YAML 解析器。
+
+---
+
+#### Step 2 — 创建 YAML 配置文件
+
+每个分析对应一个 YAML config。**直接复制合成数据示例并修改三个字段**：
+
+```bash
+cp configs/phase2_business/f4_synthetic_reusable.yaml \
+   configs/phase2_business/f4_prod_reusable.yaml
+```
+
+打开新文件，修改以下三处：
+
+```yaml
+trace_name: prod_requests          # ← 改成你的数据集名（出现在图标题中）
+input_file: data/internal/prod_requests.jsonl  # ← 改成你的数据文件路径
+output_dir: outputs/phase2_business/f4_prod_reusable  # ← 改成你的输出目录
+```
+
+其余参数（`block_size`、`bin_size_seconds` 等）按需调整，默认值对多数场景适用。
+
+**推荐 block_size**：
+
+| block_size | 适用场景 |
+|---|---|
+| `128` | 主分析（vLLM-Ascend 默认，内存更友好，**优先使用**） |
+| `64` | 中粒度补充 |
+| `32` / `16` | 细粒度 / 与论文复现对比（内存消耗更大） |
+
+---
+
+#### Step 3 — 运行分析脚本
+
+所有脚本统一入口：
+
+```bash
+python scripts/<script_name>.py configs/phase2_business/<your_config>.yaml
+```
+
+---
+
+### 当前可产出的全部分析图
+
+以下 9 项分析均已就绪，脚本和模块全部通过合成数据验证。
+
+---
+
+#### 分析 1 — F4：时间窗口 block 复用率（两张图）
+
+**目的**：观察复用率随时间的整体趋势，判断系统是否存在"热身期"或周期性波动。
+
+**两个口径**（建议同时运行）：
+
+```bash
+# 口径 A：最宽口径（任意位置复用，包括非前缀位置）
+python scripts/generate_f4_business.py configs/phase2_business/f4_prod_reusable.yaml
+
+# 口径 B：等价于无限容量 vLLM APC 命中率（从请求头部连续命中）
+python scripts/generate_f4_business.py configs/phase2_business/f4_prod_prefix.yaml
+```
+
+对应 YAML 差异：`hit_metric: content_block_reuse`（口径 A）或 `hit_metric: content_prefix_reuse`（口径 B）。
+
+**输出文件**（在 `output_dir/` 下）：
+
+```
+plot.png          # 折线图：每时间窗口的命中率（bar = 请求量，line = 命中率）
+metrics.csv       # 每窗口的 hit_blocks, total_blocks, hit_rate
+metadata.json     # 运行参数快照、全局汇总指标
+```
+
+**关键指标**（`metadata.json` 中）：
+- `overall_hit_rate`：全局微平均命中率（`Σ hit / Σ total`）
+- `macro_hit_rate`：全局宏平均（每请求命中率的均值）
+- `total_requests`：参与分析的请求数
+
+**解读**：`content_prefix_reuse` 命中率 = 无限容量 vLLM APC 的上界命中率。有限容量 LRU 实际命中率 ≤ 此值。
+
+---
+
+#### 分析 2 — F13：reuse_time CDF（单轮请求）
+
+**目的**：分析 block 从首次出现到被再次复用的等待时间分布，评估 KV cache TTL 设置是否合理。
+
+```bash
+# 口径 A：任意位置复用
+python scripts/generate_f13_business.py configs/phase2_business/f13_prod_reusable.yaml
+
+# 口径 B：前缀连续复用（更接近 vLLM 实际行为）
+python scripts/generate_f13_business.py configs/phase2_business/f13_prod_prefix.yaml
+```
+
+**输出文件**：
+
+```
+cdf.png           # reuse_time 的 CDF 曲线（X 轴：分钟，Y 轴：累积比例）
+reuse_times.csv   # 每条 reuse event 的 reuse_time 值
+metadata.json     # 总 event 数、P50/P90/P99 分位数
+```
+
+**关键指标**：P50、P90 reuse_time（分钟）——若 P90 < KV cache TTL，说明大部分复用能被当前 TTL 覆盖。
+
+---
+
+#### 分析 3 — reuse_rank：prefix 命中 block 数排名曲线
+
+**目的**：按每个请求实际命中的 prefix block 数降序排列，直观显示命中分布的偏斜程度。
+
+```bash
+python scripts/generate_reuse_rank_business.py configs/phase2_business/reuse_rank_prod.yaml
+```
+
+**输出文件**：
+
+```
+reuse_rank.png    # 排名曲线图（X = 请求排名，Y = 命中 block 数）
+reuse_rank.csv    # 每请求的排名、prefix_reuse_blocks、total_blocks
+metadata.json
+```
+
+**解读**：曲线越陡峭，命中越集中在少数请求（高 skew）；曲线越平坦，命中均匀分布。
+
+---
+
+#### 分析 4 — E3 / top_ngrams：TOP-N 高频 block 序列
+
+**目的**：找出所有请求中出现频率最高的连续 block 子序列，识别 system prompt、tool schema、固定模板等共享内容。
+
+```bash
+python scripts/generate_top_ngrams_business.py configs/phase2_business/top_ngrams_prod.yaml
+```
+
+**输出文件**：
+
+```
+top_ngrams_single_turn.txt  # 可读表格：rank, count, pct, 序列 block IDs
+top_ngrams_single_turn.csv  # CSV 版本（rank, count, pct, length, blocks）
+metadata.json
+```
+
+**解读**：Rank-1 出现次数占总请求比例高 → 该 block 序列对应强共享内容（如统一 system prompt）；单独对该内容做 warming 可显著提升命中率。
+
+---
+
+#### 分析 5 — E5：TOP-N 序列文本还原
+
+**目的**：将 E3 找到的高频 block 序列反查为可读原始文本，确认具体是哪段 prompt 在被大量复用。
+
+```bash
+python scripts/generate_e5_block_text.py configs/phase2_business/e5_block_text_prod.yaml
+```
+
+**输出文件**：
+
+```
+top_ngrams_decoded.txt  # 每个 rank 的实际文本内容（截断到 max_chars 字符）
+top_ngrams_decoded.csv  # rank, count, pct, length, truncated, text, block_ids
+metadata.json
+```
+
+**解读**：直接读 `top_ngrams_decoded.txt` 即可看到高频复用的具体文本内容，不需要手动反查 block_id。`truncated=True` 表示文本超过 `max_chars`，完整内容在 CSV 的 `text` 列。
+
+---
+
+#### 分析 6 — E1：per-user 理想 prefix 命中率分布（4 条曲线）
+
+**目的**：按用户维度拆分命中率，识别"高 cache 价值用户"和"冷启动用户"，评估不同 block_size 对命中率的影响。
+
+```bash
+python scripts/generate_user_hit_rate.py configs/phase2_business/e1_user_hit_rate_prod.yaml
+```
+
+YAML 中 `block_sizes: 16,32,64,128`（一次运行同时产出 4 条曲线）。
+
+**输出文件**：
+
+```
+user_hit_rate.png         # 4 条 block_size 曲线叠加在同一图上（X = 用户排名，Y = 命中率）
+user_hit_rate_bs16.csv    # block_size=16 的每用户统计（user_id, hit_rate, total_blocks, …）
+user_hit_rate_bs32.csv
+user_hit_rate_bs64.csv
+user_hit_rate_bs128.csv
+metadata.json             # 每个 block_size 的 micro/macro 命中率汇总
+```
+
+**YAML 参数说明**：
+- `min_blocks_pct: 0.05`（默认）：过滤 `total_blocks` 低于 P5 分位的用户（长尾噪声），推荐保留
+- `hit_rate_bar_threshold: 0.5`：子图 B 中，统计命中率 ≥ 此阈值的用户比例
+
+**解读**：若 top-20% 用户的命中率明显高于其余用户，说明存在强共享前缀的"VIP 用户群"，针对该群体单独维护 warm cache 收益大。
+
+---
+
+#### 分析 7 — E1-B：用户维度 Lorenz 曲线（命中贡献 + 请求量，各一张图）
+
+**目的**：量化 prefix cache 命中贡献的集中程度——是少数用户贡献了绝大多数命中（高 Gini），还是相对均匀分布。
+
+```bash
+python scripts/generate_skewness.py configs/phase2_business/e1b_skewness_prod.yaml
+```
+
+**输出文件**：
+
+```
+hit_contribution.png   # 图1：用户按命中 block 数降序排名的 Lorenz 曲线
+request_volume.png     # 图2：用户按请求数降序排名的 Lorenz 曲线
+hit_contribution.csv   # rank, value, value_norm, cumulative_fraction
+request_volume.csv
+metadata.json          # 两图的 Gini 系数 + top-10%/top-20% 用户占比
+```
+
+**关键指标**（`metadata.json` 中）：
+- `hit_contribution.gini_coefficient`：命中贡献的 Gini 系数（0 = 完全均匀，1 = 完全集中）
+- `request_volume.gini_coefficient`：请求量的 Gini 系数
+- `top_10pct_users_fraction_of_hits`：top-10% 用户贡献了多少比例的总命中
+
+**解读**：
+- 命中 Gini >> 请求量 Gini → 存在内容特别 cache-friendly 的用户群（相同 system prompt / tool schema），针对这批用户做 warming 收益远超请求量比例
+- 命中 Gini ≈ 请求量 Gini → cache 命中主要由请求量决定，无明显内容偏斜
+
+---
+
+### 完整执行示例
+
+以下是接入真实数据集后，一次完整分析的推荐命令序列：
+
+```bash
+DATASET=prod_requests   # 替换为你的数据集名
+
+# 1. 全局复用率趋势（必跑，最快，先看全貌）
+python scripts/generate_f4_business.py     configs/phase2_business/f4_${DATASET}_reusable.yaml
+python scripts/generate_f4_business.py     configs/phase2_business/f4_${DATASET}_prefix.yaml
+
+# 2. reuse_time 分布（评估 TTL 设置）
+python scripts/generate_f13_business.py    configs/phase2_business/f13_${DATASET}_prefix.yaml
+
+# 3. 识别高频共享内容（E3 + E5 配合使用）
+python scripts/generate_top_ngrams_business.py configs/phase2_business/top_ngrams_${DATASET}.yaml
+python scripts/generate_e5_block_text.py   configs/phase2_business/e5_block_text_${DATASET}.yaml
+
+# 4. 用户维度分析（E1 + E1-B）
+python scripts/generate_user_hit_rate.py   configs/phase2_business/e1_user_hit_rate_${DATASET}.yaml
+python scripts/generate_skewness.py        configs/phase2_business/e1b_skewness_${DATASET}.yaml
+
+# 5. 命中排名曲线（辅助）
+python scripts/generate_reuse_rank_business.py configs/phase2_business/reuse_rank_${DATASET}.yaml
+```
+
+所有输出写入 `outputs/phase2_business/`，与论文复现结果严格隔离。
+
+---
+
+### 注意事项
+
+**1. block_id 与实际 vLLM 部署的差异**
+
+当前加载器使用 `CharTokenizer`（1 字符 = 1 token）和独立 SHA-256 哈希，而非 vLLM 的链式 MurmurHash3。这意味着：
+
+- block_id 的**数值**与实际 vLLM 部署不同
+- 但同一数据集内部的**命中率统计结论**是一致有效的（等价条件见 `CLAUDE.md` Section 5a）
+- `content_prefix_reuse_rate` = 无限容量 vLLM APC 命中率的上界
+
+如需精确复现特定 vLLM 部署的 block_id，需等待 Path B 完整对齐（Layer 2/3 pending）。
+
+**2. 大数据集处理**
+
+当 `total_blocks > 30,000,000` 时，loader 会自动发出 `ResourceWarning`。建议：
+
+```bash
+# 按时间窗口切片（例如取最近 24 小时）
+head -n 50000 data/internal/prod_requests.jsonl > data/internal/prod_requests_24h.jsonl
+```
+
+或在代码中按 `timestamp` 过滤后传入 loader。
+
+**3. block_size 与 vLLM 部署对齐**
+
+`block_size` 必须与实际 vLLM 部署的 `--block-size` 参数保持一致，否则命中率统计结果不具参考意义。**每次调用 loader 必须显式传入 block_size，无默认值**（防止静默使用错误参数）。
+
+**4. 单模型假设**
+
+KV cache 复用只在同一模型同一部署实例内有效。若数据集混合了多个模型的请求，需先按 `model_id` 拆分，对每个模型单独运行分析。
+
+---
+
+### 分析图汇总
+
+| 图 | 脚本 | 产出文件 | 核心指标 |
+|---|---|---|---|
+| F4 复用率趋势（2 口径）| `generate_f4_business.py` | `plot.png`, `metrics.csv`, `metadata.json` | `overall_hit_rate`, `macro_hit_rate` |
+| F13 reuse_time CDF | `generate_f13_business.py` | `cdf.png`, `reuse_times.csv`, `metadata.json` | P50/P90/P99 reuse_time |
+| reuse_rank 排名曲线 | `generate_reuse_rank_business.py` | `reuse_rank.png`, `reuse_rank.csv` | 命中 block 数分布 |
+| E3 top_ngrams 高频序列 | `generate_top_ngrams_business.py` | `*.txt`, `*.csv`, `metadata.json` | Rank-1 count + pct |
+| E5 序列文本还原 | `generate_e5_block_text.py` | `top_ngrams_decoded.txt`, `*.csv` | 高频文本内容 |
+| E1 per-user 命中率 | `generate_user_hit_rate.py` | `user_hit_rate.png`, `bs*.csv` | micro/macro hit rate per user |
+| E1-B 命中贡献 Lorenz | `generate_skewness.py` | `hit_contribution.png`, `request_volume.png` | Gini 系数，top-10% 占比 |
+
+所有结果写入 `outputs/phase2_business/<output_dir>/`，YAML `output_dir` 字段控制子目录名。
+
+---
+
 ## 下一步
-查看 [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) 了解分步实施计划。
+查看 [PHASE2_PLAN.md](./PHASE2_PLAN.md) 了解 Phase 2 开发任务列表与接口约定。  
+查看 [EXPERIMENT_DESIGN.md](./EXPERIMENT_DESIGN.md) 了解完整实验设计方案。  
+查看 [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) 了解 V1/V2 分步实施计划。  
 详细设计约束参见 [PROJECT_SPEC_FOR_CLAUDE.md](./PROJECT_SPEC_FOR_CLAUDE.md) 与 [CLAUDE.md](./CLAUDE.md)。
