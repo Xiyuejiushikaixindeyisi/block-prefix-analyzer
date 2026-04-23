@@ -6,9 +6,9 @@
 
 trace_name: glm_4_7_hcmaas
 input_file: data/internal/glm_4_7_hcmaas/requests.jsonl
-hit_metric: content_reusable
+hit_metric: content_block_reuse
 block_size: 128
 bin_size_seconds: 60
 output_dir: outputs/maas/glm_4_7_hcmaas/f4_reusable
-figure_variant: content_reusable
+figure_variant: content_block_reuse
 note: "GLM-4.7-HCMAAS MaaS data — broadest content reuse rate over time"

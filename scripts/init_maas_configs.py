@@ -60,11 +60,11 @@ note: "{display} MaaS data — ideal prefix cache hit rate over time (9:00-11:00
 
 trace_name: {slug}
 input_file: {base_in}
-hit_metric: content_reusable
+hit_metric: content_block_reuse
 block_size: 128
 bin_size_seconds: 60
 output_dir: {base_out}/f4_reusable
-figure_variant: content_reusable
+figure_variant: content_block_reuse
 note: "{display} MaaS data — broadest content reuse rate over time"
 """,
         "f13_prefix.yaml": f"""\
@@ -86,7 +86,7 @@ note: "{display} MaaS data — prefix reuse interval distribution"
 
 trace_name: {slug}
 input_file: {base_in}
-hit_metric: content_reusable
+hit_metric: content_block_reuse
 block_size: 128
 output_dir: {base_out}/f13_reusable
 note: "{display} MaaS data — broadest reuse interval distribution"

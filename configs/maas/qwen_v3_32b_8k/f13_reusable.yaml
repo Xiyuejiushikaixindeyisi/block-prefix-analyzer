@@ -4,7 +4,7 @@
 
 trace_name: qwen_v3_32b_8k
 input_file: data/internal/qwen_v3_32b_8k/requests.jsonl
-hit_metric: content_reusable
+hit_metric: content_block_reuse
 block_size: 128
 output_dir: outputs/maas/qwen_v3_32b_8k/f13_reusable
 note: "Qwen-V3-32B-8K MaaS data — broadest reuse interval distribution"

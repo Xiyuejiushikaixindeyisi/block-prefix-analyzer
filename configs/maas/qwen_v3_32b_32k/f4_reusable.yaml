@@ -6,9 +6,9 @@
 
 trace_name: qwen_v3_32b_32k
 input_file: data/internal/qwen_v3_32b_32k/requests.jsonl
-hit_metric: content_reusable
+hit_metric: content_block_reuse
 block_size: 128
 bin_size_seconds: 60
 output_dir: outputs/maas/qwen_v3_32b_32k/f4_reusable
-figure_variant: content_reusable
+figure_variant: content_block_reuse
 note: "Qwen-V3-32B-32K MaaS data — broadest content reuse rate over time"
