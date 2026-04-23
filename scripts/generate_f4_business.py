@@ -73,6 +73,17 @@ def run(config: dict[str, str], project_root: Path) -> None:
     records = load_business_jsonl(input_path, block_size=block_size)
     print(f"  {len(records)} records loaded")
 
+    if not records:
+        print("[ERROR] No records loaded. Check that the JSONL file is non-empty "
+              "and contains valid 'raw_prompt' fields.", file=sys.stderr)
+        sys.exit(1)
+
+    total_blocks_check = sum(len(r.block_ids) for r in records)
+    if total_blocks_check == 0:
+        print("[ERROR] All records have 0 blocks. 'raw_prompt' fields may be empty "
+              "or block_size is too large for the data.", file=sys.stderr)
+        sys.exit(1)
+
     results = list(replay(records))
     series = compute_f4_series(results, hit_metric=hit_metric, bin_size_seconds=bin_size)
 

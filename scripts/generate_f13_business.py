@@ -52,9 +52,13 @@ def _load_flat_yaml(path: Path) -> dict[str, str]:
 
 
 def run(config: dict[str, str], project_root: Path) -> None:
-    event_def = config["event_definition"]
+    # Accept both 'hit_metric' (MaaS configs) and 'event_definition' (legacy synthetic configs)
+    event_def = config.get("hit_metric") or config.get("event_definition")
+    if event_def is None:
+        print("[ERROR] Config must contain 'hit_metric' or 'event_definition'.", file=sys.stderr)
+        sys.exit(1)
     if event_def not in ("content_block_reuse", "content_prefix_reuse"):
-        print(f"[ERROR] event_definition must be 'content_block_reuse' or "
+        print(f"[ERROR] hit_metric / event_definition must be 'content_block_reuse' or "
               f"'content_prefix_reuse', got {event_def!r}", file=sys.stderr)
         sys.exit(1)
 
