@@ -1,0 +1,10 @@
+# F13 figure — Qwen-V3.5-27B-64K (MaaS), content-reusable variant
+# Heatmap/CDF of reuse interval × any-block-reuse-rate.
+# Run: python scripts/generate_f13_business.py configs/maas/qwen_v3_5_27b_64k/f13_reusable.yaml
+
+trace_name: qwen_v3_5_27b_64k
+input_file: data/internal/qwen_v3_5_27b_64k/requests.jsonl
+hit_metric: content_reusable
+block_size: 128
+output_dir: outputs/maas/qwen_v3_5_27b_64k/f13_reusable
+note: "Qwen-V3.5-27B-64K MaaS data — broadest reuse interval distribution"

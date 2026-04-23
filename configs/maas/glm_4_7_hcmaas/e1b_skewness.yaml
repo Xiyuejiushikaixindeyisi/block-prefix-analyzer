@@ -1,0 +1,10 @@
+# E1-B: Reuse skewness analysis — GLM-4.7-HCMAAS (MaaS)
+# Lorenz curves: hit contribution + request volume per tenant.
+# Run: python scripts/generate_skewness.py configs/maas/glm_4_7_hcmaas/e1b_skewness.yaml
+
+trace_name: glm_4_7_hcmaas
+input_file: data/internal/glm_4_7_hcmaas/requests.jsonl
+block_size: 128
+min_blocks_pct: 0.0
+output_dir: outputs/maas/glm_4_7_hcmaas/e1b_skewness
+note: "GLM-4.7-HCMAAS MaaS data — reuse concentration across tenants"

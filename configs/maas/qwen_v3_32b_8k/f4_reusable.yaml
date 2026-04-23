@@ -1,0 +1,14 @@
+# F4 figure — Qwen-V3-32B-8K (MaaS), content-reusable variant
+# Hit definition: content_reused_blocks_anywhere
+#   Any block appearing in a prior request — widest possible reuse count.
+#   NOTE: this does NOT equal vLLM prefix cache hit; see CLAUDE.md §5a.
+# Run: python scripts/generate_f4_business.py configs/maas/qwen_v3_32b_8k/f4_reusable.yaml
+
+trace_name: qwen_v3_32b_8k
+input_file: data/internal/qwen_v3_32b_8k/requests.jsonl
+hit_metric: content_reusable
+block_size: 128
+bin_size_seconds: 60
+output_dir: outputs/maas/qwen_v3_32b_8k/f4_reusable
+figure_variant: content_reusable
+note: "Qwen-V3-32B-8K MaaS data — broadest content reuse rate over time"

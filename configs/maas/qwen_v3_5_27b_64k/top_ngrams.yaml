@@ -1,0 +1,11 @@
+# Top-ngrams analysis — Qwen-V3.5-27B-64K (MaaS)
+# Finds the most frequent consecutive block sequences across all requests.
+# Run: python scripts/generate_top_ngrams_business.py configs/maas/qwen_v3_5_27b_64k/top_ngrams.yaml
+
+trace_name: qwen_v3_5_27b_64k
+input_file: data/internal/qwen_v3_5_27b_64k/requests.jsonl
+block_size: 128
+top_k: 20
+min_count: 10
+output_dir: outputs/maas/qwen_v3_5_27b_64k/top_ngrams
+note: "Qwen-V3.5-27B-64K MaaS data — top-20 most-reused block n-grams (min_count=10 for 500 MB dataset)"

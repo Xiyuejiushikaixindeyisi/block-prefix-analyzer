@@ -1,0 +1,10 @@
+# E1-B: Reuse skewness analysis — Qwen-V3.5-27B-128K (MaaS)
+# Lorenz curves: hit contribution + request volume per tenant.
+# Run: python scripts/generate_skewness.py configs/maas/qwen_v3_5_27b_128k/e1b_skewness.yaml
+
+trace_name: qwen_v3_5_27b_128k
+input_file: data/internal/qwen_v3_5_27b_128k/requests.jsonl
+block_size: 128
+min_blocks_pct: 0.0
+output_dir: outputs/maas/qwen_v3_5_27b_128k/e1b_skewness
+note: "Qwen-V3.5-27B-128K MaaS data — reuse concentration across tenants"

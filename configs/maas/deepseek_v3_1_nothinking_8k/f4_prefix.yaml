@@ -1,0 +1,14 @@
+# F4 figure — DeepSeek-V3.1-Terminus-NoThinking-8K (MaaS), content-prefix-reuse variant
+# Hit definition: content_prefix_reuse_blocks
+#   Contiguous prefix match from request start — equivalent to ideal
+#   (infinite-capacity, same-model) vLLM APC hit count.
+# Run: python scripts/generate_f4_business.py configs/maas/deepseek_v3_1_nothinking_8k/f4_prefix.yaml
+
+trace_name: deepseek_v3_1_nothinking_8k
+input_file: data/internal/deepseek_v3_1_nothinking_8k/requests.jsonl
+hit_metric: content_prefix_reuse
+block_size: 128
+bin_size_seconds: 60
+output_dir: outputs/maas/deepseek_v3_1_nothinking_8k/f4_prefix
+figure_variant: content_prefix_reuse
+note: "DeepSeek-V3.1-Terminus-NoThinking-8K MaaS data — ideal prefix cache hit rate over time (9:00-11:00 window)"

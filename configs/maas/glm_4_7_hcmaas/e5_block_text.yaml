@@ -1,0 +1,12 @@
+# E5: Top-N block n-grams decoded to original text — GLM-4.7-HCMAAS (MaaS)
+# Reconstructs the actual prompt segments behind the most-reused block sequences.
+# Run: python scripts/generate_e5_block_text.py configs/maas/glm_4_7_hcmaas/e5_block_text.yaml
+
+trace_name: glm_4_7_hcmaas
+input_file: data/internal/glm_4_7_hcmaas/requests.jsonl
+block_size: 128
+top_k: 20
+min_count: 10
+max_chars: 500
+output_dir: outputs/maas/glm_4_7_hcmaas/e5_block_text
+note: "GLM-4.7-HCMAAS MaaS data — decoded top reused prompt segments"

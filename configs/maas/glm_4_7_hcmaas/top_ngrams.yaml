@@ -1,0 +1,11 @@
+# Top-ngrams analysis — GLM-4.7-HCMAAS (MaaS)
+# Finds the most frequent consecutive block sequences across all requests.
+# Run: python scripts/generate_top_ngrams_business.py configs/maas/glm_4_7_hcmaas/top_ngrams.yaml
+
+trace_name: glm_4_7_hcmaas
+input_file: data/internal/glm_4_7_hcmaas/requests.jsonl
+block_size: 128
+top_k: 20
+min_count: 10
+output_dir: outputs/maas/glm_4_7_hcmaas/top_ngrams
+note: "GLM-4.7-HCMAAS MaaS data — top-20 most-reused block n-grams (min_count=10 for 500 MB dataset)"

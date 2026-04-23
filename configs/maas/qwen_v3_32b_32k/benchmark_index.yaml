@@ -1,0 +1,8 @@
+# Phase 2.5 Benchmark: TrieIndex vs RadixTrieIndex — Qwen-V3-32B-32K (MaaS)
+# Run: python scripts/benchmark_index.py configs/maas/qwen_v3_32b_32k/benchmark_index.yaml
+
+trace_name: qwen_v3_32b_32k
+input_file: data/internal/qwen_v3_32b_32k/requests.jsonl
+block_size: 128
+output_dir: outputs/maas/qwen_v3_32b_32k/benchmark_index
+note: "Qwen-V3-32B-32K MaaS data — index memory/speed benchmark"

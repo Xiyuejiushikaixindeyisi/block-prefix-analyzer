@@ -1,0 +1,12 @@
+# E5: Top-N block n-grams decoded to original text — Qwen-V3-32B-8K (MaaS)
+# Reconstructs the actual prompt segments behind the most-reused block sequences.
+# Run: python scripts/generate_e5_block_text.py configs/maas/qwen_v3_32b_8k/e5_block_text.yaml
+
+trace_name: qwen_v3_32b_8k
+input_file: data/internal/qwen_v3_32b_8k/requests.jsonl
+block_size: 128
+top_k: 20
+min_count: 10
+max_chars: 500
+output_dir: outputs/maas/qwen_v3_32b_8k/e5_block_text
+note: "Qwen-V3-32B-8K MaaS data — decoded top reused prompt segments"

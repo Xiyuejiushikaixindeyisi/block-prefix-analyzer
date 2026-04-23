@@ -1,0 +1,9 @@
+# Reuse-rank figure — DeepSeek-V3.1-Terminus-NoThinking-8K (MaaS)
+# Ranks requests by prefix cache hit block count; shows Pareto-style distribution.
+# Run: python scripts/generate_reuse_rank_business.py configs/maas/deepseek_v3_1_nothinking_8k/reuse_rank.yaml
+
+trace_name: deepseek_v3_1_nothinking_8k
+input_file: data/internal/deepseek_v3_1_nothinking_8k/requests.jsonl
+block_size: 128
+output_dir: outputs/maas/deepseek_v3_1_nothinking_8k/reuse_rank
+note: "DeepSeek-V3.1-Terminus-NoThinking-8K MaaS data — block reuse Pareto distribution"

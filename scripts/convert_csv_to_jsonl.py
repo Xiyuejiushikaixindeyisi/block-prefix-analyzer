@@ -1,36 +1,33 @@
 #!/usr/bin/env python3
 """Convert MaaS system CSV data to JSONL format for block-prefix-analyzer.
 
-CSV column layout (0-indexed):
-  0  request_id      – unique request identifier
-  1  tenant_id       – tenant / user identifier  (→ user_id in JSONL)
-  2  request_params  – JSON string containing {"messages": [...], ...}
-  3  timestamp       – arrival time (ISO-8601 string or Unix float)
+Two modes:
 
-The script extracts raw_prompt by concatenating all message contents in order:
-    "role: content\n\n" per message, joined together.
+Mode A — direct fields (new internal datasets)
+  CSV already contains {user_id, request_id, timestamp, raw_prompt} columns.
+  Use --col-raw-prompt to specify the raw_prompt column index.
 
+  python scripts/convert_csv_to_jsonl.py \\
+      --input  data/internal/qwen_v3_32b_8k/raw/data.csv \\
+      --output data/internal/qwen_v3_32b_8k/requests.jsonl \\
+      --col-user-id 0 --col-request-id 1 --col-timestamp 2 --col-raw-prompt 3
+
+Mode B — request_params JSON (legacy MaaS CSV with embedded API body)
+  CSV column 2 is a JSON string {"messages": [...], ...}; raw_prompt is
+  extracted by concatenating all message contents.
+
+  python scripts/convert_csv_to_jsonl.py \\
+      --input  data/internal/deepseek_v3_671b_8k/raw/data.csv \\
+      --output data/internal/deepseek_v3_671b_8k/requests.jsonl
+
+Common options:
+  --has-header        Skip the first row as a header
+  --encoding ENCODING Input file encoding (default: utf-8)
+  --progress-every N  Print progress every N rows (default: 10000)
+
+Streaming design: processes one CSV row at a time; safe for 500 MB+ files.
 Output JSONL line (one per request):
     {"user_id": "...", "request_id": "...", "timestamp": 1700000000.0, "raw_prompt": "..."}
-
-Usage
------
-    python scripts/convert_csv_to_jsonl.py \\
-        --input  data/internal/deepseek_v3_671b_8k/raw/data.csv \\
-        --output data/internal/deepseek_v3_671b_8k/requests.jsonl
-
-    # Override column indices if the CSV has a different layout:
-    python scripts/convert_csv_to_jsonl.py \\
-        --input  data/internal/qwen2_72b/raw/data.csv \\
-        --output data/internal/qwen2_72b/requests.jsonl \\
-        --col-request-id 0 --col-tenant-id 1 --col-params 2 --col-timestamp 3
-
-    # CSV with header row:
-    python scripts/convert_csv_to_jsonl.py \\
-        --input data.csv --output out.jsonl --has-header
-
-Streaming design: processes one CSV row at a time; safe for 1 GB+ files.
-Progress is printed every --progress-every rows (default 10000).
 """
 from __future__ import annotations
 
@@ -134,13 +131,26 @@ def convert(
     output_path: Path,
     col_request_id: int = 0,
     col_tenant_id: int = 1,
-    col_params: int = 2,
+    col_params: int | None = 2,       # Mode B: JSON request_params column
     col_timestamp: int = 3,
+    col_raw_prompt: int | None = None, # Mode A: direct raw_prompt column
     has_header: bool = False,
     encoding: str = "utf-8",
     progress_every: int = 10_000,
 ) -> None:
+    """Convert CSV to JSONL.
+
+    Mode A (col_raw_prompt is not None): read raw_prompt directly from that column.
+    Mode B (col_raw_prompt is None):     extract raw_prompt from col_params JSON.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    direct_mode = col_raw_prompt is not None
+    if direct_mode:
+        required_cols = max(col_request_id, col_tenant_id, col_timestamp, col_raw_prompt)
+    else:
+        assert col_params is not None
+        required_cols = max(col_request_id, col_tenant_id, col_params, col_timestamp)
 
     written = 0
     skipped = 0
@@ -159,7 +169,6 @@ def convert(
                 return
 
         for row_num, row in enumerate(reader, start=2 if has_header else 1):
-            required_cols = max(col_request_id, col_tenant_id, col_params, col_timestamp)
             if len(row) <= required_cols:
                 print(
                     f"[WARN] row {row_num}: only {len(row)} columns, need {required_cols + 1}; skipping.",
@@ -170,10 +179,12 @@ def convert(
 
             request_id = row[col_request_id].strip()
             tenant_id  = row[col_tenant_id].strip()
-            params_str = row[col_params]
             ts_str     = row[col_timestamp]
 
-            raw_prompt = _extract_raw_prompt(params_str, row_num)
+            if direct_mode:
+                raw_prompt = row[col_raw_prompt]
+            else:
+                raw_prompt = _extract_raw_prompt(row[col_params], row_num)  # type: ignore[index]
             timestamp  = _parse_timestamp(ts_str, row_num)
 
             record = {
@@ -204,14 +215,19 @@ def main() -> None:
     )
     parser.add_argument("--input",  required=True, help="Path to input CSV file")
     parser.add_argument("--output", required=True, help="Path to output JSONL file")
-    parser.add_argument("--col-request-id", type=int, default=0, metavar="N",
-                        help="0-indexed column for request_id (default: 0)")
-    parser.add_argument("--col-tenant-id",  type=int, default=1, metavar="N",
-                        help="0-indexed column for tenant_id  (default: 1)")
-    parser.add_argument("--col-params",     type=int, default=2, metavar="N",
-                        help="0-indexed column for request_params JSON (default: 2)")
-    parser.add_argument("--col-timestamp",  type=int, default=3, metavar="N",
-                        help="0-indexed column for timestamp (default: 3)")
+    parser.add_argument("--col-user-id",    type=int, default=0, metavar="N",
+                        help="0-indexed column for user_id / tenant_id (default: 0)")
+    parser.add_argument("--col-request-id", type=int, default=1, metavar="N",
+                        help="0-indexed column for request_id (default: 1)")
+    parser.add_argument("--col-timestamp",  type=int, default=2, metavar="N",
+                        help="0-indexed column for timestamp (default: 2)")
+    parser.add_argument("--col-raw-prompt", type=int, default=3, metavar="N",
+                        help="0-indexed column for raw_prompt text [Mode A, default: 3]. "
+                             "Use --col-params instead to parse a request_params JSON column.")
+    parser.add_argument("--col-params",     type=int, default=None, metavar="N",
+                        help="0-indexed column for request_params JSON [Mode B]. "
+                             "When set, overrides --col-raw-prompt and extracts raw_prompt "
+                             "from messages[] inside the JSON.")
     parser.add_argument("--has-header", action="store_true",
                         help="Skip the first row as a header")
     parser.add_argument("--encoding", default="utf-8",
@@ -227,14 +243,25 @@ def main() -> None:
         print(f"[ERROR] Input file not found: {input_path}", file=sys.stderr)
         sys.exit(1)
 
+    # Mode B (--col-params) overrides Mode A (--col-raw-prompt)
+    if args.col_params is not None:
+        col_raw_prompt = None
+        col_params     = args.col_params
+        print(f"[Mode B] Extracting raw_prompt from request_params JSON in column {col_params}")
+    else:
+        col_raw_prompt = args.col_raw_prompt
+        col_params     = None
+        print(f"[Mode A] Reading raw_prompt directly from column {col_raw_prompt}")
+
     print(f"Converting {input_path} → {output_path}")
     convert(
         input_path,
         output_path,
         col_request_id  = args.col_request_id,
-        col_tenant_id   = args.col_tenant_id,
-        col_params      = args.col_params,
+        col_tenant_id   = args.col_user_id,
+        col_params      = col_params,
         col_timestamp   = args.col_timestamp,
+        col_raw_prompt  = col_raw_prompt,
         has_header      = args.has_header,
         encoding        = args.encoding,
         progress_every  = args.progress_every,

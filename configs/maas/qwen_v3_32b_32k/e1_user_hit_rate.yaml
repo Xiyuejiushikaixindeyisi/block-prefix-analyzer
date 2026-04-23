@@ -1,0 +1,11 @@
+# E1: Per-user ideal prefix hit rate — 4 block_size sweep — Qwen-V3-32B-32K (MaaS)
+# Produces a 4-curve comparison figure.
+# Run: python scripts/generate_user_hit_rate.py configs/maas/qwen_v3_32b_32k/e1_user_hit_rate.yaml
+
+trace_name: qwen_v3_32b_32k
+input_file: data/internal/qwen_v3_32b_32k/requests.jsonl
+block_sizes: 16,32,64,128
+min_blocks_pct: 0.05
+hit_rate_bar_threshold: 0.5
+output_dir: outputs/maas/qwen_v3_32b_32k/e1_user_hit_rate
+note: "Qwen-V3-32B-32K MaaS data — per-user prefix hit rate across block sizes"

@@ -1,0 +1,10 @@
+# E1-B: Reuse skewness analysis — DeepSeek-V3.1-Terminus-NoThinking-8K (MaaS)
+# Lorenz curves: hit contribution + request volume per tenant.
+# Run: python scripts/generate_skewness.py configs/maas/deepseek_v3_1_nothinking_8k/e1b_skewness.yaml
+
+trace_name: deepseek_v3_1_nothinking_8k
+input_file: data/internal/deepseek_v3_1_nothinking_8k/requests.jsonl
+block_size: 128
+min_blocks_pct: 0.0
+output_dir: outputs/maas/deepseek_v3_1_nothinking_8k/e1b_skewness
+note: "DeepSeek-V3.1-Terminus-NoThinking-8K MaaS data — reuse concentration across tenants"

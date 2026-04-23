@@ -1,0 +1,11 @@
+# Top-ngrams analysis — DeepSeek-V3.1-Terminus-NoThinking-8K (MaaS)
+# Finds the most frequent consecutive block sequences across all requests.
+# Run: python scripts/generate_top_ngrams_business.py configs/maas/deepseek_v3_1_nothinking_8k/top_ngrams.yaml
+
+trace_name: deepseek_v3_1_nothinking_8k
+input_file: data/internal/deepseek_v3_1_nothinking_8k/requests.jsonl
+block_size: 128
+top_k: 20
+min_count: 10
+output_dir: outputs/maas/deepseek_v3_1_nothinking_8k/top_ngrams
+note: "DeepSeek-V3.1-Terminus-NoThinking-8K MaaS data — top-20 most-reused block n-grams (min_count=10 for 500 MB dataset)"

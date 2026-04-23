@@ -1,0 +1,9 @@
+# Reuse-rank figure — Qwen-V3.5-27B-128K (MaaS)
+# Ranks requests by prefix cache hit block count; shows Pareto-style distribution.
+# Run: python scripts/generate_reuse_rank_business.py configs/maas/qwen_v3_5_27b_128k/reuse_rank.yaml
+
+trace_name: qwen_v3_5_27b_128k
+input_file: data/internal/qwen_v3_5_27b_128k/requests.jsonl
+block_size: 128
+output_dir: outputs/maas/qwen_v3_5_27b_128k/reuse_rank
+note: "Qwen-V3.5-27B-128K MaaS data — block reuse Pareto distribution"
