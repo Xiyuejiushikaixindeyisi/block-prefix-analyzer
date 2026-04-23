@@ -4,6 +4,40 @@
 
 当前状态：**V1 完整 + V2-min 完整 + Phase 2 全部完成 + Phase 2.5 完成 — 670 个测试全部通过（10 个 xfail 为预期 pending）**。
 
+---
+
+## 新机器快速上手（Quick Start on a New Machine）
+
+> 适用于 WSL / Linux / macOS，Python ≥ 3.10。合成数据已内置，clone 后无需任何外部数据即可运行。
+
+```bash
+# 1. 克隆仓库
+git clone git@github.com:Xiyuejiushikaixindeyisi/block-prefix-analyzer.git
+cd block-prefix-analyzer
+
+# 2. 创建并激活虚拟环境
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3. 安装依赖（核心库 + 绘图 + 测试工具）
+pip install -e ".[dev,plots]"
+
+# 4. 运行完整测试套件（670 passed，10 xfailed 为预期 pending）
+pytest
+
+# 5. 运行 quickstart 示例（加载合成数据 → replay → 打印指标）
+python examples/quickstart.py
+
+# 6. （可选）生成合成数据集的全套分析图
+bash scripts/run_maas_analysis.sh phase2_business   # 需先有对应 YAML，见下方说明
+# 或直接运行单项分析：
+python scripts/generate_f4_business.py configs/phase2_business/f4_synthetic_prefix.yaml
+```
+
+**接入自有 MaaS 数据集**：见下方 [MaaS 系统数据接入指南](#maas-系统数据接入指南)。
+
+---
+
 ## 设计目标
 - 给定按时间排序的请求流，回放并输出：
   - 每个请求可复用的最长 **block 前缀**

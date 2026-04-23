@@ -30,10 +30,11 @@ dev = [
 ]
 plots = [
     "matplotlib>=3.6",
+    "numpy>=1.24",
 ]
 
 [project.urls]
-Repository = "local://block-prefix-analyzer"
+Repository = "https://github.com/Xiyuejiushikaixindeyisi/block-prefix-analyzer"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,0 +1,6 @@
+# Runtime dependencies for analysis scripts (plotting)
+matplotlib>=3.6
+numpy>=1.24
+
+# Development / testing
+pytest>=7.4
