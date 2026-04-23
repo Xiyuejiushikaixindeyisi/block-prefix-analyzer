@@ -1,0 +1,8 @@
+# Phase 2.5 Benchmark: TrieIndex vs RadixTrieIndex — DeepSeek-V3-671B-8K (MaaS)
+# Run: python scripts/benchmark_index.py configs/maas/deepseek_v3_671b_8k/benchmark_index.yaml
+
+trace_name: deepseek_v3_671b_8k
+input_file: data/internal/deepseek_v3_671b_8k/requests.jsonl
+block_size: 128
+output_dir: outputs/maas/deepseek_v3_671b_8k/benchmark_index
+note: "DeepSeek-V3-671B-8K MaaS data — RadixTrieIndex expected to win on long-context prompts"

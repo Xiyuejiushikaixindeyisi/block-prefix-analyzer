@@ -1,0 +1,11 @@
+# Top-ngrams analysis — DeepSeek-V3-671B-8K (MaaS)
+# Finds the most frequent block n-grams (consecutive block sequences).
+# Run: python scripts/generate_top_ngrams_business.py configs/maas/deepseek_v3_671b_8k/top_ngrams.yaml
+
+trace_name: deepseek_v3_671b_8k
+input_file: data/internal/deepseek_v3_671b_8k/requests.jsonl
+block_size: 128
+top_k: 20
+min_count: 5
+output_dir: outputs/maas/deepseek_v3_671b_8k/top_ngrams
+note: "DeepSeek-V3-671B-8K MaaS data — top-20 most-reused block n-grams"
