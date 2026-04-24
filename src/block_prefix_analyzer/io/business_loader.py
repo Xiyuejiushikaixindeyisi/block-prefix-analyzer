@@ -152,9 +152,13 @@ def load_business_jsonl(
     if field_map:
         effective.update(field_map)
 
+    # Agent-specific optional fields passed through to metadata unchanged.
+    _AGENT_PASSTHROUGH_FIELDS = ("chat_id", "turn_index")
+
     raw_requests: list[RawRequest] = []
-    user_ids: list[str] = []      # parallel to raw_requests; indexed by arrival_index
-    raw_prompts: list[str] = []   # parallel to raw_requests; used for block_registry
+    user_ids: list[str] = []           # parallel to raw_requests; indexed by arrival_index
+    raw_prompts: list[str] = []        # parallel to raw_requests; used for block_registry
+    agent_extras: list[dict] = []      # parallel to raw_requests; Agent passthrough fields
 
     with Path(path).open(encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, start=1):
@@ -185,6 +189,9 @@ def load_business_jsonl(
             ))
             user_ids.append(user_id)
             raw_prompts.append(raw_prompt)
+            agent_extras.append(
+                {k: obj[k] for k in _AGENT_PASSTHROUGH_FIELDS if k in obj}
+            )
 
     if not raw_requests:
         return []
@@ -203,6 +210,7 @@ def load_business_jsonl(
     effective_bs: int = block_builder.block_size if block_builder is not None else block_size  # type: ignore[assignment]
     for record in records:
         record.metadata["user_id"] = user_ids[record.arrival_index]
+        record.metadata.update(agent_extras[record.arrival_index])
         if block_registry is not None:
             rp = raw_prompts[record.arrival_index]
             for i, bid in enumerate(record.block_ids):

@@ -1,0 +1,9 @@
+# F10 — Per-user session turn mean & std distribution (synthetic data)
+# Plot A: per-user mean turns + Lorenz cumulation curve
+# Plot B: per-user std turns  + Lorenz cumulation curve
+# Run: python scripts/generate_f10.py configs/paper_repro/f10_synthetic.yaml
+
+input_file: data/synthetic/f10_synthetic.jsonl
+output_dir: outputs/paper_repro/f10_synthetic
+trace_name: synthetic
+note: "Synthetic 300-user multi-turn dataset for F10 development verification"

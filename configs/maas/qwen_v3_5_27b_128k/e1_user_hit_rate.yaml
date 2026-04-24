@@ -4,7 +4,7 @@
 
 trace_name: qwen_v3_5_27b_128k
 input_file: data/internal/qwen_v3_5_27b_128k/requests.jsonl
-block_sizes: 16,32,64,128
+block_sizes: 32,64,128,256
 min_blocks_pct: 0.05
 hit_rate_bar_threshold: 0.5
 output_dir: outputs/maas/qwen_v3_5_27b_128k/e1_user_hit_rate

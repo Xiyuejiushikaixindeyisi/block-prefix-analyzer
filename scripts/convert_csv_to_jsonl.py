@@ -143,6 +143,7 @@ def convert(
     Mode A (col_raw_prompt is not None): read raw_prompt directly from that column.
     Mode B (col_raw_prompt is None):     extract raw_prompt from col_params JSON.
     """
+    csv.field_size_limit(10 * 1024 * 1024)  # allow up to 10 MB per field (large prompts)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     direct_mode = col_raw_prompt is not None

@@ -1,4 +1,18 @@
-"""F14 analysis — multi-turn follow-up version of F13 (Trace A only).
+"""F14 analysis — multi-turn follow-up version of F13.
+
+Two analysis paths are supported:
+
+Path A — TraceA (parent_chat_id)
+    Follow-up turns identified by ``metadata["parent_chat_id"] >= 0``.
+    Used for: TraceA public dataset via ``load_traceA_jsonl``.
+
+Path B — Agent JSONL (turn_index)
+    Follow-up turns identified by ``metadata["turn_index"] > 0``.
+    Used for: Agent JSONL produced by ``convert_agent_csv_to_jsonl.py``
+    and loaded via ``load_business_jsonl``.
+
+``compute_f14`` auto-detects the path: if any record carries
+``metadata["turn_index"]``, Path B is used; otherwise Path A.
 
 Relationship to F13
 -------------------
@@ -6,43 +20,21 @@ F14 = F13 restricted to follow-up turns of multi-turn sessions, with a
 globally-shared pool (not a per-turn-type pool).
 
 source_scope
-    Follow-up turns ONLY: requests where parent_chat_id >= 0 (have a parent).
-    Root turns of multi-turn sessions (parent_chat_id == -1) behave identically
-    to single-turn requests from a context-reuse standpoint and are therefore
-    excluded from event generation.  They DO warm the pool.
+    Follow-up turns ONLY (turn_index > 0 or parent_chat_id >= 0).
+    Root turns (turn_index == 0 or parent_chat_id == -1) update the pool
+    but do not generate CDF events.
 
 Main CDF
-    Backward-looking, ALL-request pool.  For each follow-up request in
-    chronological order:
+    Backward-looking, ALL-request pool.  For each follow-up request:
     1. Query  — which of its unique blocks appeared in any earlier request?
     2. Yield  — one ReuseEventRow per eligible unique block.
     3. Insert — update pool (all request types, no self-hit).
-    Root turns and single-turn requests update the pool but do not generate
-    events.  CDF is computed over ALL events; x-axis is clipped to 0–24 min
-    at plot time.
+    CDF computed over ALL events; x-axis clipped at plot time.
 
-Inset  (paper-aligned: prefix sharing)
+Inset  (prefix sharing)
     For each follow-up request r_i:
-        r_i.is_reusable = ∃ future request r_j  (any type)
-                          such that r_j.block_ids[0] == r_i.block_ids[0]
-    This is the minimum condition for vLLM Automatic Prefix Caching to reuse
-    at least one KV block from r_i.  Under chained hashing, only prefix-chain-
-    identical blocks share a physical KV block; the first block must match.
-    Denominator: all follow-up (multi-turn) requests.
-    Numerator:   follow-up requests with is_reusable == True.
-    Consumer type is unrestricted.
-
-    content_reused_block_count per record:
-        max(lcp_len(r_i.block_ids, r_j.block_ids)
-            for r_j that starts with r_i.block_ids[0])
-    i.e., the maximum prefix overlap length with any future consumer.
-
-Known limitation — CDF events (main plot)
-    CDF events use any-block overlap (content_block_reuse_proxy), which is
-    broader than vLLM prefix semantics.  The inset uses strict prefix-sharing.
-    CDF curves should be treated as proxy metrics; the inset is paper-aligned.
-
-Analysis path: TraceA replay (Path A) — block_ids from hash_ids, no V2 pipeline.
+        r_i.is_reusable = ∃ future request r_j such that
+                          r_j.block_ids[0] == r_i.block_ids[0]
 """
 from __future__ import annotations
 
@@ -82,11 +74,7 @@ _TS_SENTINEL = "\xff" * 32
 # ---------------------------------------------------------------------------
 
 def identify_multi_turn_request_ids(records: list[RequestRecord]) -> frozenset[str]:
-    """Return IDs of follow-up turns: requests where parent_chat_id >= 0.
-
-    Root turns (parent_chat_id == -1 or absent) are excluded — they have no
-    prior session context and behave like single-turn requests.
-    """
+    """Path A — TraceA: follow-up turns where parent_chat_id >= 0."""
     result: list[str] = []
     for r in records:
         pid = r.metadata.get("parent_chat_id")
@@ -98,6 +86,17 @@ def identify_multi_turn_request_ids(records: list[RequestRecord]) -> frozenset[s
         except (ValueError, TypeError):
             pass
     return frozenset(result)
+
+
+def identify_multi_turn_request_ids_by_turn_index(
+    records: list[RequestRecord],
+) -> frozenset[str]:
+    """Path B — Agent JSONL: follow-up turns where turn_index > 0."""
+    return frozenset(
+        r.request_id
+        for r in records
+        if r.metadata.get("turn_index", 0) > 0
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -159,8 +158,12 @@ def compute_f14(
         type_label_mapping = DEFAULT_TYPE_LABEL_MAPPING
 
     records = list(records)
-    # Follow-up turns only as event sources.
-    multi_turn_ids = identify_multi_turn_request_ids(records)
+    # Auto-detect path: Agent JSONL has turn_index, TraceA has parent_chat_id.
+    has_turn_index = any(r.metadata.get("turn_index") is not None for r in records)
+    if has_turn_index:
+        multi_turn_ids = identify_multi_turn_request_ids_by_turn_index(records)
+    else:
+        multi_turn_ids = identify_multi_turn_request_ids(records)
     sorted_recs = sort_records(records)
 
     # ---- Backward pass: CDF events (all-request pool) ----

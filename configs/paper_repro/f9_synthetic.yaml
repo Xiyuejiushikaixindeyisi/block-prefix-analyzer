@@ -1,0 +1,7 @@
+# F9 — Session turn-count CDF (synthetic data)
+# Run: python scripts/generate_f9.py configs/paper_repro/f9_synthetic.yaml
+
+input_file: data/synthetic/f10_synthetic.jsonl
+output_dir: outputs/paper_repro/f9_synthetic
+trace_name: synthetic
+note: "Synthetic 300-user multi-turn dataset for F9 development verification"

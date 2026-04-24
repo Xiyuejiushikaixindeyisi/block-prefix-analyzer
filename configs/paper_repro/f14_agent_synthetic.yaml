@@ -1,0 +1,9 @@
+# F14 — Multi-turn KV reuse CDF (synthetic Agent data)
+# Run: python scripts/generate_f14_agent.py configs/paper_repro/f14_agent_synthetic.yaml
+
+input_file: data/synthetic/agent_test.jsonl
+output_dir: outputs/paper_repro/f14_agent_synthetic
+trace_name: agent_synthetic
+block_size: 128
+x_axis_max_minutes: 60
+note: "Synthetic Agent data for F14 Agent-path development verification"

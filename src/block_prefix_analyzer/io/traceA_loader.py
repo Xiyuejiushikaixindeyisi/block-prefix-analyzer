@@ -7,6 +7,7 @@ Maps external trace field names to the internal RequestRecord model:
   parent_chat_id  → metadata["parent_chat_id"]  (V2+)
   type            → metadata["type"]             (V2+)
   turn            → metadata["turn"]             (V2+)
+  user_id         → metadata["user_id"]          (optional; present in Agent datasets)
   input_length    → token_count (optional)
   output_length   → metadata["output_length"]
 
@@ -29,7 +30,7 @@ from block_prefix_analyzer.types import RequestRecord, sort_records
 TRACE_A_BLOCK_SIZE = 16
 """Token block size used when the TraceA dataset was pre-processed (blksz_16)."""
 
-_TRACEА_EXTRA_FIELDS = ("parent_chat_id", "type", "turn", "output_length")
+_TRACEА_EXTRA_FIELDS = ("parent_chat_id", "type", "turn", "user_id", "output_length")
 
 
 def load_traceA_jsonl(path: Path | str) -> list[RequestRecord]:

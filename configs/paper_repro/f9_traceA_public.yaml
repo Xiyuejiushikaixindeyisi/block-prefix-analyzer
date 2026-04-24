@@ -1,0 +1,10 @@
+# F9 — Session turn-count CDF (Trace A public)
+# X axis: #Requests per session (Turns)
+# Y axis: Cumulative fraction
+# Run: python scripts/generate_f9.py configs/paper_repro/f9_traceA_public.yaml
+
+input_file: data/public/qwen_traceA_blksz_16.jsonl
+output_dir: outputs/paper_repro/f9_traceA_public
+trace_name: traceA_public
+x_max: 37
+note: "Trace A public dataset — session turn-count distribution"
