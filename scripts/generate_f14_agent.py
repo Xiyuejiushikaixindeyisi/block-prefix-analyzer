@@ -81,12 +81,20 @@ def run(config: dict[str, str], project_root: Path) -> None:
         print(f"  turn_index present: {n_with_turn:,} records  "
               f"| follow-up turns (turn_index>0): {n_followup:,}")
 
-    print(f"Computing F14 (multi-turn KV reuse CDF, x_max={x_axis_max} min) ...")
+    hit_metric = config.get("hit_metric", "content_block_reuse")
+    if hit_metric not in ("content_block_reuse", "content_prefix_reuse"):
+        print(f"[ERROR] hit_metric must be 'content_block_reuse' or 'content_prefix_reuse', "
+              f"got {hit_metric!r}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Computing F14 (multi-turn KV reuse CDF, x_max={x_axis_max} min, "
+          f"hit_metric={hit_metric}) ...")
     output: F14Output = compute_f14(
         records,
         x_axis_max_minutes=x_axis_max,
         type_label_mapping={"unknown": "Text"},
         block_size=block_size,
+        hit_metric=hit_metric,
     )
     series = output.series
     total = output.multi_turn_request_count

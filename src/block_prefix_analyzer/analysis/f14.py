@@ -139,6 +139,7 @@ def compute_f14(
     x_axis_max_minutes: float = DEFAULT_X_AXIS_MAX_MINUTES,
     type_label_mapping: dict[str, str] | None = None,
     block_size: int = 16,
+    hit_metric: str = "content_block_reuse",
 ) -> F14Output:
     """Compute F14 series.
 
@@ -153,7 +154,17 @@ def compute_f14(
         Override type → display_label mapping.
     block_size:
         Tokens per block (used for token approximation in forward records).
+    hit_metric:
+        ``"content_block_reuse"`` (default) — any block appearing in an earlier
+        request counts as a reuse event (broadest definition).
+        ``"content_prefix_reuse"`` — only contiguous-prefix blocks count
+        (equivalent to infinite-capacity vLLM APC).
     """
+    if hit_metric not in ("content_block_reuse", "content_prefix_reuse"):
+        raise ValueError(
+            f"hit_metric must be 'content_block_reuse' or 'content_prefix_reuse', "
+            f"got {hit_metric!r}"
+        )
     if type_label_mapping is None:
         type_label_mapping = DEFAULT_TYPE_LABEL_MAPPING
 
@@ -171,15 +182,30 @@ def compute_f14(
     all_events: list[ReuseEventRow] = []
     backward_reusable: set[str] = set()
 
+    # Prefix index — only allocated when hit_metric == "content_prefix_reuse".
+    prefix_index = None
+    if hit_metric == "content_prefix_reuse":
+        from block_prefix_analyzer.replay import _auto_index_factory
+        prefix_index = _auto_index_factory(sorted_recs)()
+
     for record in sorted_recs:
         is_followup = record.request_id in multi_turn_ids
         req_type = record.metadata.get("type", "unknown")
         label = type_label_mapping.get(req_type, req_type)
-        unique_blocks: set[BlockId] = set(record.block_ids)
 
         if is_followup:
             # Query before insert (no self-hit).
-            eligible = {bid for bid in unique_blocks if bid in last_seen_ts}
+            if hit_metric == "content_prefix_reuse":
+                prefix_len = prefix_index.longest_prefix_match(record.block_ids)
+                eligible = {
+                    bid for bid in record.block_ids[:prefix_len]
+                    if bid in last_seen_ts
+                }
+            else:
+                eligible = {
+                    bid for bid in set(record.block_ids)
+                    if bid in last_seen_ts
+                }
             for bid in eligible:
                 rt_sec = float(record.timestamp) - last_seen_ts[bid]
                 all_events.append(ReuseEventRow(
@@ -193,8 +219,11 @@ def compute_f14(
                 backward_reusable.add(record.request_id)
 
         # ALL requests update the pool (single-turn, roots, and follow-ups).
+        unique_blocks: set[BlockId] = set(record.block_ids)
         for bid in unique_blocks:
             last_seen_ts[bid] = float(record.timestamp)
+        if prefix_index is not None:
+            prefix_index.insert(record.block_ids)
 
     cdf_rows = _compute_cdf_rows(all_events)
 
