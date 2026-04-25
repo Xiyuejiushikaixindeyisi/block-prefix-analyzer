@@ -27,7 +27,7 @@ from block_prefix_analyzer.analysis.f9 import (
     save_f9_csv,
     save_f9_metadata_json,
 )
-from block_prefix_analyzer.io.traceA_loader import load_traceA_jsonl
+from block_prefix_analyzer.io.business_loader import load_business_jsonl
 from block_prefix_analyzer.plotting.f9 import plot_f9
 
 
@@ -54,8 +54,9 @@ def run(config: dict[str, str], project_root: Path) -> None:
         print(f"[ERROR] Input file not found: {input_path}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Loading {input_path} ...")
-    records = load_traceA_jsonl(input_path)
+    block_size = int(config.get("block_size", "128"))
+    print(f"Loading {input_path} (block_size={block_size}) ...")
+    records = load_business_jsonl(input_path, block_size=block_size)
     print(f"  {len(records)} records loaded")
 
     print("Computing F9 (session turn-count CDF) ...")

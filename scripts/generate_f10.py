@@ -25,7 +25,7 @@ from block_prefix_analyzer.analysis.f10 import (
     save_f10_metadata_json,
     save_f10_std_csv,
 )
-from block_prefix_analyzer.io.traceA_loader import load_traceA_jsonl
+from block_prefix_analyzer.io.business_loader import load_business_jsonl
 from block_prefix_analyzer.plotting.f10 import plot_f10
 
 
@@ -51,8 +51,9 @@ def run(config: dict[str, str], project_root: Path) -> None:
         print(f"[ERROR] Input file not found: {input_path}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Loading {input_path} ...")
-    records = load_traceA_jsonl(input_path)
+    block_size = int(config.get("block_size", "128"))
+    print(f"Loading {input_path} (block_size={block_size}) ...")
+    records = load_business_jsonl(input_path, block_size=block_size)
     print(f"  {len(records)} records loaded")
 
     # Warn if user_id is missing

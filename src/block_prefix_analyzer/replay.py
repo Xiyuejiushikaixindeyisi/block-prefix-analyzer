@@ -178,13 +178,20 @@ def replay(
     PerRequestResult
         One result per input record, emitted in canonical sort order.
     """
+    import sys
+    import time
+
     sorted_records = sort_records(list(records))
     if index_factory is None:
         index_factory = _auto_index_factory(sorted_records)
     index: PrefixIndex = index_factory()
     seen_blocks: set[BlockId] = set()
 
-    for record in sorted_records:
+    total = len(sorted_records)
+    _PRINT_INTERVAL = max(1, total // 100)  # print every ~1% progress
+    _start = time.time()
+
+    for i, record in enumerate(sorted_records):
         # Step 1: measure against prior state only (no self-hit)
         prefix_hit = index.longest_prefix_match(record.block_ids)
         reusable_count = sum(1 for bid in record.block_ids if bid in seen_blocks)
@@ -202,3 +209,16 @@ def replay(
         # Step 3: update state so this record is visible to future records
         index.insert(record.block_ids)
         seen_blocks.update(record.block_ids)
+
+        if (i + 1) % _PRINT_INTERVAL == 0 or (i + 1) == total:
+            elapsed = time.time() - _start
+            rate = (i + 1) / elapsed if elapsed > 0 else 0
+            eta = (total - i - 1) / rate if rate > 0 else 0
+            print(
+                f"  replay: {i + 1:,}/{total:,}  "
+                f"({(i + 1) / total * 100:.1f}%)  "
+                f"elapsed: {elapsed:.0f}s  "
+                f"eta: {eta:.0f}s",
+                flush=True,
+                file=sys.stderr,
+            )
