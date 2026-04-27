@@ -106,12 +106,13 @@ async def _send_request(
     timeout: float,
 ) -> dict:
     import aiohttp
-    url = f"{endpoint.rstrip('/')}/v1/completions"
+    url = f"{endpoint.rstrip('/')}/v1/chat/completions"
     payload = {
         "model":      model,
-        "prompt":     prompt,
+        "messages":   [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
         "stream":     False,
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     t0 = time.perf_counter()
     try:
