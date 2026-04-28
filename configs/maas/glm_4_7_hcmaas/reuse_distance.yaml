@@ -1,0 +1,10 @@
+input_file: data/internal/glm_4_7_hcmaas/requests.jsonl
+output_dir: outputs/maas/glm_4_7_hcmaas/reuse_distance
+block_size: 128
+# available_cache_blocks: 4096
+# Estimate formula (see V4_plan.md P1):
+#   (GPU_mem_GB × gpu_memory_utilization - model_weight_GB)
+#   / (block_size × num_layers × 2 × num_kv_heads × head_dim × dtype_bytes / 1e9)
+# Fill in after deployment and check vLLM startup log for num_gpu_blocks.
+trace_name: GLM-4.7-HCMAAS
+note: "V4 Module 1 — reuse distance analysis, block_size=128"
