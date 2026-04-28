@@ -1,18 +1,18 @@
 input_file: data/internal/qwen_v3_5_27b_128k/requests.jsonl
 output_dir: outputs/maas/qwen_v3_5_27b_128k/reuse_distance
-# block_size = 2048 to match vLLM-Ascend deployment block granularity.
+# analysis_block_size = 128 chars (CharTokenizer, uniform across all analyses).
 #
-# Deployment: Qwen3.5-27B, 910B4 × 8, max_model_len=131072
-#   prefix cache + mamba-cache-mode=align forces block_size = 2048 tokens
-#   available_cache_blocks ≈ 500  (benchmark-derived capacity boundary)
-#   total KV cache ≈ 500 × 2048 ≈ 1,024,000 tokens
+# available_cache_blocks: TBD — fill in after confirming from vLLM startup log:
+#   grep -nE "Setting attention block size|num_gpu_blocks" /path/to/vllm_service.log
 #
-# Block consumption per request at this block_size:
-#   28K  prompt → ~15 blocks   56K → ~28    120K → ~59    128K → ~62
+# Conversion:
+#   vllm_block_size=128  → available_cache_blocks = num_gpu_blocks
+#   vllm_block_size=2048 → available_cache_blocks = num_gpu_blocks × 16
 #
-# Safe concurrency estimates (30% reserve → budget ≈ 350 blocks):
-#   28K: concurrency 16   56K: concurrency 8–12   128K: concurrency 4–5
-block_size: 2048
-available_cache_blocks: 500
+# Deployment note (Qwen3.5-27B, 910B4 × 8, hybrid attention+mamba):
+#   vllm_block_size is NOT confirmed — may be 128 or 2048 depending on
+#   whether --mamba-cache-mode align is set. Must read from startup log.
+block_size: 128
+# available_cache_blocks:
 trace_name: Qwen-V3.5-27B-128K
-note: "V4 Module 1 — reuse distance (block_size=2048 chars ≈ vLLM 2048-token block)"
+note: "V4 Module 1 — reuse distance, block_size=128 (analysis unit, uniform)"
