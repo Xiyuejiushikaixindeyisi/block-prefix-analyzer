@@ -1,10 +1,25 @@
 input_file: data/internal/glm_4_7_hcmaas/requests.jsonl
 output_dir: outputs/maas/glm_4_7_hcmaas/reuse_distance
-block_size: 128
-# available_cache_blocks: 4096
-# Estimate formula (see V4_plan.md P1):
-#   (GPU_mem_GB × gpu_memory_utilization - model_weight_GB)
-#   / (block_size × num_layers × 2 × num_kv_heads × head_dim × dtype_bytes / 1e9)
-# Fill in after deployment and check vLLM startup log for num_gpu_blocks.
+# block_size = 2048 to approximate vLLM-Ascend's actual block granularity.
+#
+# Deployment context (Qwen3.5-27B, 910B4 × 8, mamba-cache-mode=align):
+#   vLLM block_size      = 2048 tokens   (forced by prefix cache + mamba align)
+#   available_cache_blocks ≈ 500 blocks  (derived from benchmark: capacity boundary
+#                                         at ~460-510 total blocks in flight)
+#   total KV cache       ≈ 500 × 2048 ≈ 1,024,000 tokens
+#
+# CharTokenizer maps 1 char → 1 token, so block_size=2048 chars ≈ 2048 tokens.
+# This approximation holds well for Chinese-dominant Agent prompts.
+# Using this granularity makes reuse_distance_blocks directly comparable to
+# available_cache_blocks (both in vLLM block units).
+#
+# Concurrency safety estimates at this capacity:
+#   28K  prompt → ~15 blocks/req  → safe at concurrency 16
+#   56K  prompt → ~28 blocks/req  → safe at concurrency 8–16
+#   120K prompt → ~59 blocks/req  → safe at concurrency 4
+#   128K prompt → ~63 blocks/req  → recommended max concurrency 4–5
+#   (rule of thumb: reserve 30% buffer → safe budget ≈ 350 blocks)
+block_size: 2048
+available_cache_blocks: 500
 trace_name: GLM-4.7-HCMAAS
-note: "V4 Module 1 — reuse distance analysis, block_size=128"
+note: "V4 Module 1 — reuse distance (block_size=2048 chars ≈ vLLM 2048-token block)"

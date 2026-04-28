@@ -1,0 +1,10 @@
+input_file: data/internal/qwen_v3_5_27b_64k/requests.jsonl
+output_dir: outputs/maas/qwen_v3_5_27b_64k/reuse_distance
+# block_size=128 for standard transformer models (vLLM-Ascend default with prefix cache).
+# available_cache_blocks: not set — fill in after reading vLLM startup log (num_gpu_blocks).
+# Conversion hint: if vLLM reports block_size=128 tokens and num_gpu_blocks=N,
+# then set available_cache_blocks: N directly (units match).
+block_size: 128
+# available_cache_blocks:
+trace_name: qwen_v3_5_27b_64k
+note: "V4 Module 1 — reuse distance, block_size=128 (standard Ascend transformer)"
