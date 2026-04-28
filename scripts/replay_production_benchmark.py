@@ -322,10 +322,14 @@ def main() -> None:
         m_before = scrape_metrics(args.endpoint)
         wall_before = time.time()
 
+        if m_before:
+            hit_str = f"{m_before.get('prefix_cache_hit_rate') or 0:.3f}"
+            gpu_str = f"{m_before.get('gpu_cache_usage_perc') or 0:.3f}"
+            metrics_str = f"  hit_rate={hit_str}  gpu={gpu_str}"
+        else:
+            metrics_str = "  (no /metrics)"
         print(f"  batch {batch_idx+1:>3}/{len(batches)}  ts={ts_str}  "
-              f"size={len(batch_rows):>2}  "
-              f"hit_rate={m_before.get('prefix_cache_hit_rate') or 0:.3f}  "
-              f"gpu={m_before.get('gpu_cache_usage_perc') or 0:.3f}",
+              f"size={len(batch_rows):>2}{metrics_str}",
               flush=True)
 
         # Send batch concurrently
@@ -414,13 +418,22 @@ def main() -> None:
     print("\n── Summary ──────────────────────────────────────────────────────")
     total_req  = sum(r["batch_size"] for r in metric_rows)
     total_ok   = sum(r["success_count"] for r in metric_rows)
+    all_lat    = [r["latency_mean"] for r in metric_rows if r.get("latency_mean") is not None]
     hit_rates  = [r["prefix_cache_hit_rate"] for r in metric_rows
-                  if r["prefix_cache_hit_rate"] is not None]
+                  if r.get("prefix_cache_hit_rate") is not None]
+    print(f"  total requests: {total_req}  success: {total_ok}  "
+          f"({total_ok / total_req * 100:.1f}%)" if total_req else "  no requests sent")
+    if all_lat:
+        import statistics as _stats
+        print(f"  latency (mean across batches):  "
+              f"min={min(all_lat):.2f}s  median={_stats.median(all_lat):.2f}s  "
+              f"max={max(all_lat):.2f}s")
     if hit_rates:
         print(f"  prefix_cache_hit_rate:  "
               f"min={min(hit_rates):.3f}  max={max(hit_rates):.3f}  "
               f"final={hit_rates[-1]:.3f}")
-    print(f"  total requests: {total_req}  success: {total_ok}")
+    else:
+        print("  prefix_cache_hit_rate: n/a (no /metrics)")
     print(f"  output dir: {output_dir}")
 
 

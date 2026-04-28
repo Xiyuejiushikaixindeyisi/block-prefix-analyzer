@@ -295,10 +295,13 @@ def main() -> None:
             )
             row["round"] = r
             round_rows.append(row)
-            print(f"  hit_rate={row['prefix_cache_hit_rate']:.3f}  "
-                  f"removed/stored={row['removed_over_stored']:.3f}  "
-                  f"idle_mean={row['idle_before_evict_mean_s']:.1f}s  "
-                  f"rps={row['requests_per_second']}")
+            import math
+            has_metrics = not math.isnan(row.get("prefix_cache_hit_rate") or float("nan"))
+            hit_str  = f"{row['prefix_cache_hit_rate']:.3f}" if has_metrics else "n/a"
+            rem_str  = f"{row['removed_over_stored']:.3f}"   if has_metrics else "n/a"
+            idle_str = f"{row['idle_before_evict_mean_s']:.1f}s" if has_metrics else "n/a"
+            print(f"  hit_rate={hit_str}  removed/stored={rem_str}  "
+                  f"idle_mean={idle_str}  rps={row['requests_per_second']}")
 
         # Average across rounds
         avg: dict = {"concurrency": concurrency, "round": "avg"}

@@ -109,6 +109,50 @@ def print_summary(rows: list[dict], f13_gap_min: float | None) -> None:
         print("↳ idle_before_evict should stay above this value for 80% block survival")
 
 
+def plot_figure_3a(rows: list[dict], output_dir: Path) -> None:
+    """Figure 3a: latency (p50/p95) and throughput vs concurrency — no /metrics needed."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[WARN] matplotlib not available, skipping Figure 3a.", file=sys.stderr)
+        return
+
+    xs    = [r["concurrency"] for r in rows]
+    p50   = [r.get("latency_p50") or 0 for r in rows]
+    p95   = [r.get("latency_p95") or 0 for r in rows]
+    rps   = [r.get("requests_per_second") or 0 for r in rows]
+
+    fig, ax1 = plt.subplots(figsize=(9, 4))
+    ax2 = ax1.twinx()
+
+    ax1.plot(xs, p50, "o-",  color="#2196F3", ms=5, label="latency p50 (s)")
+    ax1.plot(xs, p95, "s--", color="#F44336", ms=5, label="latency p95 (s)")
+    ax2.plot(xs, rps, "^-",  color="#4CAF50", ms=5, label="throughput (req/s)")
+
+    # Inflection: where p95 latency starts rising
+    inf_idx = find_inflection(xs, p95, direction="rise")
+    if inf_idx is not None:
+        ax1.axvline(xs[inf_idx], color="red", linestyle=":", alpha=0.7,
+                    label=f"latency inflection @ concurrency={int(xs[inf_idx])}")
+
+    ax1.set_xlabel("Concurrency")
+    ax1.set_ylabel("Latency (s)")
+    ax2.set_ylabel("Throughput (requests/s)")
+    ax1.set_title("Figure 3a — Latency & Throughput vs Concurrency")
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=8, loc="upper left")
+
+    fig.tight_layout()
+    out = output_dir / "figure_3a_latency_throughput.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"  Figure 3a saved: {out}")
+
+
 def plot_results(rows: list[dict], output_dir: Path, f13_gap_min: float | None) -> None:
     try:
         import matplotlib
@@ -120,8 +164,15 @@ def plot_results(rows: list[dict], output_dir: Path, f13_gap_min: float | None) 
 
     xs = [r["concurrency"] for r in rows]
 
+    # Detect whether /metrics data is present
+    has_hit_rate = any(r.get("prefix_cache_hit_rate") not in (None, float("nan"), 0)
+                       for r in rows)
+
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-    fig.suptitle("KV Cache Keep-alive Capacity Boundary", fontsize=12)
+    title = "KV Cache Keep-alive Capacity Boundary"
+    if not has_hit_rate:
+        title += " (client-side only — /metrics unavailable)"
+    fig.suptitle(title, fontsize=11)
 
     # Plot 1: Hit rate
     ax = axes[0][0]
@@ -134,7 +185,8 @@ def plot_results(rows: list[dict], output_dir: Path, f13_gap_min: float | None) 
         ax.legend(fontsize=7)
     ax.set_xlabel("Concurrency")
     ax.set_ylabel("Prefix Cache Hit Rate")
-    ax.set_title("Hit Rate vs Concurrency")
+    sub_title = "Hit Rate vs Concurrency" if has_hit_rate else "Hit Rate (requires /metrics)"
+    ax.set_title(sub_title)
 
     # Plot 2: BlockRemoved/BlockStored
     ax = axes[0][1]
@@ -147,7 +199,8 @@ def plot_results(rows: list[dict], output_dir: Path, f13_gap_min: float | None) 
         ax.legend(fontsize=7)
     ax.set_xlabel("Concurrency")
     ax.set_ylabel("BlockRemoved / BlockStored")
-    ax.set_title("Eviction Pressure vs Concurrency")
+    sub_title = "Eviction Pressure" if has_hit_rate else "Eviction Pressure (requires /metrics)"
+    ax.set_title(sub_title)
 
     # Plot 3: idle_before_evict_mean
     ax = axes[1][0]
@@ -159,7 +212,8 @@ def plot_results(rows: list[dict], output_dir: Path, f13_gap_min: float | None) 
         ax.legend(fontsize=7)
     ax.set_xlabel("Concurrency")
     ax.set_ylabel("idle_before_evict mean (s)")
-    ax.set_title("Block Keep-alive Window vs Concurrency")
+    sub_title = "Block Keep-alive Window" if has_hit_rate else "Block Keep-alive (requires /metrics)"
+    ax.set_title(sub_title)
 
     # Plot 4: GPU cache usage
     ax = axes[1][1]
@@ -169,13 +223,14 @@ def plot_results(rows: list[dict], output_dir: Path, f13_gap_min: float | None) 
     ax.legend(fontsize=7)
     ax.set_xlabel("Concurrency")
     ax.set_ylabel("GPU KV Cache Usage")
-    ax.set_title("GPU Cache Utilization vs Concurrency")
+    sub_title = "GPU Cache Utilization" if has_hit_rate else "GPU Usage (requires /metrics)"
+    ax.set_title(sub_title)
 
     plt.tight_layout()
     output_dir.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_dir / "capacity_boundary.png", dpi=150)
     plt.close(fig)
-    print(f"\nPlot saved: {output_dir / 'capacity_boundary.png'}")
+    print(f"\n  capacity_boundary.png saved: {output_dir / 'capacity_boundary.png'}")
 
 
 def main() -> None:
@@ -254,6 +309,8 @@ def main() -> None:
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n"
     )
 
+    print("\nGenerating plots ...")
+    plot_figure_3a(rows, output_dir)
     plot_results(rows, output_dir, f13_gap_min)
     print(f"\nAnalysis written to: {output_dir}")
 
