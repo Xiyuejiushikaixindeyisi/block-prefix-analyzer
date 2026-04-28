@@ -1,7 +1,10 @@
-# block_prefix_analyzer 能力概览
+# block_prefix_analyzer 第一阶段功能简介
+
+> **阶段定位**：第一阶段（Phase 1–3）离线分析 + 在线实验框架已完成。本文档是该阶段能力的完整参考手册。
+> Phase 4（V4）正在进行中，实验设计见 `V4_plan.md`。
 
 **版本**：v4.0（2026-04-28）
-**定位**：KV cache prefix 复用分析工具，从离线理论分析到在线 API 实测，覆盖 KV block 生命周期研究的完整链路。
+**定位**：KV cache prefix 复用分析工具，覆盖从离线理论分析（block 复用率、reuse time、用户分布）到在线 API 实测（vLLM KV block 生命周期）的完整链路。
 
 ---
 
