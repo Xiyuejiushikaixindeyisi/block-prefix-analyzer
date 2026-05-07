@@ -300,3 +300,26 @@ def test_priority_group_titles_match_expected_keys(dashboard):
 def test_priority_badge_includes_warning_for_none(dashboard):
     assert dashboard.PRIORITY_BADGE[None].startswith("⚠️")
     assert dashboard.PRIORITY_BADGE["P0"].startswith("🔴")
+
+
+# ---------------------------------------------------------------------------
+# _resolve_outputs_root (env var override)
+# ---------------------------------------------------------------------------
+
+def test_resolve_outputs_root_honors_env_var(tmp_path: Path, dashboard,
+                                              monkeypatch):
+    monkeypatch.setenv("BPA_OUTPUTS_ROOT", str(tmp_path))
+    assert dashboard._resolve_outputs_root() == tmp_path
+
+
+def test_resolve_outputs_root_expands_user(dashboard, monkeypatch):
+    monkeypatch.setenv("BPA_OUTPUTS_ROOT", "~/some/outputs")
+    out = dashboard._resolve_outputs_root()
+    assert "~" not in str(out)
+
+
+def test_resolve_outputs_root_default_falls_back(dashboard, monkeypatch):
+    monkeypatch.delenv("BPA_OUTPUTS_ROOT", raising=False)
+    out = dashboard._resolve_outputs_root()
+    assert out.name == "maas"
+    assert out.parent.name == "outputs"

@@ -20,6 +20,7 @@ Per ``可视化.md §1`` decisions:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,21 @@ HISTOGRAM_BINS = 20
 
 
 PROJECT_ROOT = Path(__file__).parent.parent
-DEFAULT_OUTPUTS_ROOT = PROJECT_ROOT / "outputs" / "maas"
+
+
+def _resolve_outputs_root() -> Path:
+    """Honour BPA_OUTPUTS_ROOT env var; fall back to ``outputs/maas`` in the repo.
+
+    Useful for pointing the dashboard at a synthetic / staging outputs tree
+    without modifying the repo's outputs directory.
+    """
+    env = os.environ.get("BPA_OUTPUTS_ROOT")
+    if env:
+        return Path(env).expanduser()
+    return PROJECT_ROOT / "outputs" / "maas"
+
+
+DEFAULT_OUTPUTS_ROOT = _resolve_outputs_root()
 
 
 # ---------------------------------------------------------------------------
@@ -651,7 +666,7 @@ def _render_section_4(model_dir: Path, report: dict[str, Any]) -> None:
     st.dataframe(
         df,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "rank":          st.column_config.NumberColumn("rank", width="small"),
             "position":      st.column_config.NumberColumn("position", width="small"),
