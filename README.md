@@ -1004,12 +1004,39 @@ pip install -e ".[ui]"
 streamlit --version    # ≥ 1.28
 ```
 
-### 完整 Pipeline（每个新模型一次）
+### 一键 Pipeline（推荐）
+
+每个新模型只需一行命令，自动跑 CSV→JSONL→single_turn→11 个分析→report.json，并行加速、幂等可恢复：
+
+```bash
+# 把 CSV 放到 data/internal/<MODEL>/raw/<MODEL>.csv 后：
+scripts/run_dashboard_pipeline.sh <MODEL>
+
+# 数据在 /data/internal/ 下（仓库外）：
+DATA_ROOT=/data/internal scripts/run_dashboard_pipeline.sh <MODEL>
+
+# 重跑全部分析（即使 metadata.json 已存在）：
+FORCE=1 scripts/run_dashboard_pipeline.sh <MODEL>
+
+# 内存紧 / 调试：禁用并行
+PARALLEL=1 scripts/run_dashboard_pipeline.sh <MODEL>
+```
+
+启动 dashboard（一次即可，新模型 build 完后侧边栏自动出现）：
+
+```bash
+streamlit run scripts/dashboard.py
+```
+
+### 手动分步 Pipeline（对照 / 排错用）
 
 ```bash
 MODEL=qwen_v3_5_27b_64k
 
-# 1) CSV → JSONL（chat_id / user_id / raw_prompt / timestamp 四列；
+# 1) 一次性生成 16 个 YAML 配置（11 个 dashboard + 5 个 legacy；现有的不覆盖）
+python scripts/init_maas_configs.py "$MODEL" "Qwen-V3.5-27B-64K"
+
+# 2) CSV → JSONL（chat_id / user_id / raw_prompt / timestamp 四列；
 #    converter 会自动 t -= min_timestamp 做窗口对齐）
 python scripts/convert_agent_csv_to_jsonl.py \
     --input  data/internal/$MODEL/raw/$MODEL.csv \
@@ -1017,12 +1044,12 @@ python scripts/convert_agent_csv_to_jsonl.py \
     --col-chat-id 0 --col-user-id 1 --col-raw-prompt 2 --col-timestamp 3 \
     --has-header --encoding utf-8-sig
 
-# 2) 抽出单轮子集（turn_index == 0 流式过滤；F13 输入用此文件）
+# 3) 抽出单轮子集（turn_index == 0 流式过滤；F13 输入用此文件）
 python scripts/generate_single_turn_subset.py \
     --input  data/internal/$MODEL/requests.jsonl \
     --output data/internal/$MODEL/requests_single_turn.jsonl
 
-# 3) 跑 11 个分析（YAML 由 init_maas_configs 生成；首次手工补 traffic_pattern.yaml）
+# 4) 跑 11 个 dashboard 分析（也可直接调用 run_dashboard_pipeline 的并行段）
 python scripts/generate_f4_business.py        configs/maas/$MODEL/f4_prefix.yaml
 python scripts/generate_f13_business.py       configs/maas/$MODEL/f13_prefix.yaml
 python scripts/generate_f14_agent.py          configs/maas/$MODEL/f14_prefix.yaml
@@ -1035,11 +1062,11 @@ python scripts/generate_reuse_distance.py     configs/maas/$MODEL/reuse_distance
 python scripts/generate_common_prefix.py      configs/maas/$MODEL/common_prefix.yaml
 python scripts/generate_traffic_pattern.py    configs/maas/$MODEL/traffic_pattern.yaml
 
-# 4) 聚合 → outputs/maas/$MODEL/report.json
+# 5) 聚合 → outputs/maas/$MODEL/report.json
 python scripts/build_model_report.py --model $MODEL
 # 或 --all 跑所有已分析模型
 
-# 5) 启动 dashboard
+# 6) 启动 dashboard
 streamlit run scripts/dashboard.py
 ```
 
