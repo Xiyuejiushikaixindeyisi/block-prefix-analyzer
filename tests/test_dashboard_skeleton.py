@@ -248,3 +248,55 @@ def test_consensus_blocks_to_frame_falls_back_to_other_when_type_missing(dashboa
         {"rank": 1, "text_preview": "x"}
     ])
     assert df.iloc[0]["type"].endswith("other")
+
+
+# ---------------------------------------------------------------------------
+# group_recommendations (Step 14 helper)
+# ---------------------------------------------------------------------------
+
+def test_group_recommendations_empty(dashboard):
+    out = dashboard.group_recommendations([])
+    # All four keys present even when there's nothing.
+    assert set(out.keys()) == {"P0", "P1", "P2", "warning"}
+    assert all(v == [] for v in out.values())
+
+
+def test_group_recommendations_routes_by_priority_and_type(dashboard):
+    recs = [
+        {"rule_id": "R-A", "type": "recommendation", "priority": "P1"},
+        {"rule_id": "R-B", "type": "recommendation", "priority": "P0"},
+        {"rule_id": "W-A", "type": "warning",        "priority": None},
+        {"rule_id": "R-C", "type": "recommendation", "priority": "P2"},
+        {"rule_id": "R-D", "type": "recommendation", "priority": "P1"},
+    ]
+    out = dashboard.group_recommendations(recs)
+    assert [r["rule_id"] for r in out["P0"]] == ["R-B"]
+    assert [r["rule_id"] for r in out["P1"]] == ["R-A", "R-D"]
+    assert [r["rule_id"] for r in out["P2"]] == ["R-C"]
+    assert [r["rule_id"] for r in out["warning"]] == ["W-A"]
+
+
+def test_group_recommendations_unknown_priority_falls_through_to_p2(dashboard):
+    recs = [{"rule_id": "R-X", "type": "recommendation", "priority": "P9"}]
+    out = dashboard.group_recommendations(recs)
+    assert [r["rule_id"] for r in out["P2"]] == ["R-X"]
+    assert out["P0"] == out["P1"] == out["warning"] == []
+
+
+def test_group_recommendations_warning_takes_precedence_over_priority(dashboard):
+    """A row tagged as warning routes to warning even if priority is set."""
+    recs = [{"rule_id": "W-X", "type": "warning", "priority": "P0"}]
+    out = dashboard.group_recommendations(recs)
+    assert out["P0"] == []
+    assert [r["rule_id"] for r in out["warning"]] == ["W-X"]
+
+
+def test_priority_group_titles_match_expected_keys(dashboard):
+    assert set(dashboard.PRIORITY_GROUP_TITLES.keys()) == {
+        "P0", "P1", "P2", "warning",
+    }
+
+
+def test_priority_badge_includes_warning_for_none(dashboard):
+    assert dashboard.PRIORITY_BADGE[None].startswith("⚠️")
+    assert dashboard.PRIORITY_BADGE["P0"].startswith("🔴")

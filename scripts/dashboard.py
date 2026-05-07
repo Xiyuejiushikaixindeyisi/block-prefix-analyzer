@@ -672,6 +672,89 @@ def _render_section_4(model_dir: Path, report: dict[str, Any]) -> None:
     )
 
 
+PRIORITY_BADGE: dict[str | None, str] = {
+    "P0": "🔴 P0",
+    "P1": "🟠 P1",
+    "P2": "🟡 P2",
+    None: "⚠️ Warning",
+}
+
+PRIORITY_GROUP_TITLES: dict[str, str] = {
+    "P0": "🔴 P0 — 立即处理",
+    "P1": "🟠 P1 — 中期规划",
+    "P2": "🟡 P2 — 战略调整",
+    "warning": "⚠️ 数据质量警告",
+}
+
+
+def group_recommendations(recs: list[dict]) -> dict[str, list[dict]]:
+    """Group section_5 entries into ``P0 / P1 / P2 / warning`` buckets.
+
+    The returned dict always has all 4 keys (possibly with empty lists)
+    so callers can iterate in a fixed display order. Unknown priorities
+    on a non-warning entry fall through to ``P2`` rather than being
+    dropped silently — keeps debug surfaces visible.
+    """
+    groups: dict[str, list[dict]] = {"P0": [], "P1": [], "P2": [], "warning": []}
+    for r in recs:
+        if r.get("type") == "warning":
+            groups["warning"].append(r)
+            continue
+        p = r.get("priority")
+        if p in ("P0", "P1", "P2"):
+            groups[p].append(r)
+        else:
+            groups["P2"].append(r)
+    return groups
+
+
+def _render_recommendation_card(rec: dict) -> None:
+    badge = PRIORITY_BADGE.get(rec.get("priority"), "·")
+    rule_id = rec.get("rule_id", "—")
+    confidence = rec.get("confidence", "—")
+
+    with st.container(border=True):
+        head = st.columns([2, 3, 3])
+        head[0].markdown(f"**{badge}**")
+        head[1].markdown(f"`{rule_id}`")
+        head[2].markdown(f"confidence: **{confidence}**")
+
+        st.markdown(f"**结论**：{rec.get('conclusion', '—')}")
+
+        evidence = rec.get("evidence") or []
+        if evidence:
+            st.markdown("**证据**")
+            for ev in evidence:
+                st.markdown(f"- {ev}")
+
+        action = rec.get("action")
+        if action:
+            st.markdown(f"**建议行动**：{action}")
+
+
+def _render_section_5(report: dict[str, Any]) -> None:
+    st.header("5. 优化建议 (Recommendations)")
+    recs = report.get("section_5_recommendations") or []
+    if not recs:
+        st.success(
+            "✅ 当前没有规则触发 — 数据看起来稳定，或上游分析输入不完整。"
+        )
+        return
+
+    n_rec = sum(1 for r in recs if r.get("type") != "warning")
+    n_warn = sum(1 for r in recs if r.get("type") == "warning")
+    st.caption(f"共 {n_rec} 条建议 + {n_warn} 条警告。")
+
+    groups = group_recommendations(recs)
+    for key in ("P0", "P1", "P2", "warning"):
+        items = groups[key]
+        if not items:
+            continue
+        st.subheader(PRIORITY_GROUP_TITLES[key])
+        for rec in items:
+            _render_recommendation_card(rec)
+
+
 def _render_f10(model_dir: Path, f10: dict[str, Any] | None) -> None:
     st.markdown("**F10 — per-user turn statistics**")
     if not f10:
@@ -745,10 +828,7 @@ def main() -> None:
     _render_section_4(model_dir, report)
     st.divider()
 
-    _render_placeholder(
-        "5. 优化建议 (Recommendations)",
-        "Step 14 will wire: P0/P1/P2 + Warning 卡片，按优先级分组。",
-    )
+    _render_section_5(report)
 
 
 if __name__ == "__main__":
