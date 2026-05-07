@@ -1,0 +1,12 @@
+# Traffic-pattern signals — Qwen-V3.5-27B-64K (MaaS)
+# Computes inter-arrival percentiles, request volume timeseries, write-rate
+# series, and working-set sizes for the [60, 120]-min windows.
+# Run: python scripts/generate_traffic_pattern.py configs/maas/qwen_v3_5_27b_64k/traffic_pattern.yaml
+
+trace_name: qwen_v3_5_27b_64k
+input_file: data/internal/qwen_v3_5_27b_64k/requests.jsonl
+output_dir: outputs/maas/qwen_v3_5_27b_64k/traffic_pattern
+block_size: 128
+volume_bin_seconds: 60
+working_set_windows_min: 60,120
+note: "Qwen-V3.5-27B-64K MaaS data — traffic business pattern"
