@@ -32,6 +32,10 @@ plots = [
     "matplotlib>=3.6",
     "numpy>=1.24",
 ]
+ui = [
+    "streamlit>=1.28",
+    "pandas>=2.0",
+]
 
 [project.urls]
 Repository = "https://github.com/Xiyuejiushikaixindeyisi/block-prefix-analyzer"
