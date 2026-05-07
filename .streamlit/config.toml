@@ -1,0 +1,15 @@
+# Privacy-hardening defaults for the prefix-cache dashboard.
+# Loaded automatically by `streamlit run` from the project root.
+# Override per-invocation with CLI flags or env vars (STREAMLIT_*) when needed.
+
+[server]
+# Bind only to the loopback interface so the dashboard is not reachable
+# from other hosts on the LAN / VPN. Important when the underlying CSVs
+# contain private MaaS data.
+address = "localhost"
+
+[browser]
+# Disable Streamlit's anonymous usage telemetry. Streamlit never sends
+# user data, but disabling this guarantees zero outbound traffic from
+# the runtime when serving private analyses.
+gatherUsageStats = false

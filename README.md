@@ -1042,6 +1042,23 @@ streamlit run scripts/dashboard.py
 BPA_OUTPUTS_ROOT=/tmp/staging_outputs streamlit run scripts/dashboard.py
 ```
 
+### 隐私加固
+
+仓库内置 `.streamlit/config.toml`，`streamlit run` 自动读取，已关闭：
+
+- `server.address = "localhost"` — 仅绑 loopback，LAN / VPN 上的其它主机访问不到。
+- `browser.gatherUsageStats = false` — 关闭 Streamlit 的匿名使用统计，私有 MaaS 数据不会触发任何对外网络流量。
+
+确认生效（任意目录执行）：
+
+```bash
+streamlit config show | grep -E "^address|^gatherUsageStats"
+# address = "localhost"
+# gatherUsageStats = false
+```
+
+按需覆盖时用 CLI flag（如 `--server.address 0.0.0.0`）或 `STREAMLIT_SERVER_ADDRESS` 环境变量；项目级 config 不会写入用户 `~/.streamlit/`。
+
 ### 单 / 多轮口径
 
 阶段一定义：`turn_index == 0` 为单轮（任意 chat 的第一轮），`turn_index > 0` 为多轮。
