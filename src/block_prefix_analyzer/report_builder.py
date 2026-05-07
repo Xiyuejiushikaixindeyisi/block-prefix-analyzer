@@ -155,6 +155,34 @@ def _user_hit_distribution(csv_path: Path) -> dict[str, float] | None:
     }
 
 
+def _f10_lorenz_top10pct_share(csv_path: Path) -> float | None:
+    """Top-10% users' share of total turns from f10_mean_turns.csv.
+
+    The CSV has columns ``rank, user_id, mean_turns, cumulative_fraction``.
+    "Top 10%" refers to the users with the *highest* mean_turns; we sort the
+    metric column descending and sum the leading ``ceil(N * 0.1)`` rows.
+    Returns ``None`` if the CSV is missing or empty.
+    """
+    if not csv_path.exists():
+        return None
+    means: list[float] = []
+    with csv_path.open(encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            try:
+                means.append(float(r["mean_turns"]))
+            except (KeyError, ValueError):
+                continue
+    if not means:
+        return None
+    total = sum(means)
+    if total <= 0:
+        return None
+    means.sort(reverse=True)
+    k = max(1, round(len(means) * 0.1))
+    return float(sum(means[:k]) / total)
+
+
 def _reuse_rank_distribution(csv_path: Path) -> dict[str, float] | None:
     """``reuse_rank.csv`` has one row per (rank, count); sum to per-request."""
     if not csv_path.exists():
@@ -312,6 +340,7 @@ def _build_section_2_traffic(
     traffic: dict | None,
     f9: dict | None,
     f10: dict | None,
+    f10_dir: Path | None = None,
 ) -> dict | None:
     if traffic is None and f9 is None and f10 is None:
         return None
@@ -351,11 +380,17 @@ def _build_section_2_traffic(
         else:
             session_structure["f9_turn_count_cdf"] = None
         if f10 is not None:
+            top10_share = None
+            if f10_dir is not None:
+                top10_share = _f10_lorenz_top10pct_share(
+                    f10_dir / "f10_mean_turns.csv"
+                )
             session_structure["f10_user_turn_stats"] = {
                 "csv_path": "f10_agent/f10_mean_turns.csv",
                 "total_users": f10.get("total_users"),
                 "mean_turns_overall": f10.get("mean_turns_overall"),
                 "std_turns_overall": f10.get("std_turns_overall"),
+                "lorenz_top10_pct_share_of_turns": top10_share,
             }
         else:
             session_structure["f10_user_turn_stats"] = None
@@ -555,6 +590,7 @@ def assemble_report(
             traffic=meta_blobs["traffic_pattern"],
             f9=meta_blobs["f9_agent"],
             f10=meta_blobs["f10_agent"],
+            f10_dir=sub["f10_agent"],
         ),
         "section_3_locality": _build_section_3_locality(
             f13_meta=meta_blobs["f13_prefix"],

@@ -80,6 +80,12 @@ def _write_full_outputs(outputs_dir: Path) -> None:
         "mean_turns_overall": 1.85,
         "std_turns_overall": 1.42,
     })
+    # f10_mean_turns.csv — 10 users; top-10% (1 user) owns 10/55 ≈ 0.1818 share.
+    _write_csv(
+        outputs_dir / "f10_agent" / "f10_mean_turns.csv",
+        ["rank", "user_id", "mean_turns", "cumulative_fraction"],
+        [[i + 1, f"u{i + 1}", float(i + 1), 0.0] for i in range(10)],
+    )
 
     # F13 — metadata + cdf csv (5 rows: cdf reaches 1.0 at t=255s)
     _write_json(outputs_dir / "f13_prefix" / "metadata.json", {
@@ -274,6 +280,10 @@ def test_full_outputs_populates_every_section(tmp_path: Path):
     assert s2["working_set"]["unique_blocks"] == [3200, 5000]
     assert s2["session_structure"]["f9_turn_count_cdf"]["mean_turns"] == 1.85
     assert s2["session_structure"]["f10_user_turn_stats"]["total_users"] == 25
+    # 10 users with mean_turns 1..10, sum=55. Top 10% = 1 user owning 10 turns.
+    assert s2["session_structure"]["f10_user_turn_stats"][
+        "lorenz_top10_pct_share_of_turns"
+    ] == pytest.approx(10 / 55, rel=1e-6)
 
     # ---- section 3 ----
     s3 = report["section_3_locality"]
