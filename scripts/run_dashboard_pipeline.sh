@@ -12,6 +12,7 @@
 #   4. Run 11 analyses in parallel (skipped per-analysis if metadata.json
 #      already exists and FORCE is not set)
 #   5. Aggregate → outputs/maas/<MODEL>/report.json
+#   6. Render → outputs/maas/<MODEL>/report.html (single-file static report)
 #
 # Environment variables (all optional):
 #
@@ -81,7 +82,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # ---------------------------------------------------------------------------
 
 echo
-echo "[1/5] init dashboard YAMLs"
+echo "[1/6] init dashboard YAMLs"
 python scripts/init_maas_configs.py "$MODEL" "$DISPLAY_NAME"
 
 # ---------------------------------------------------------------------------
@@ -89,7 +90,7 @@ python scripts/init_maas_configs.py "$MODEL" "$DISPLAY_NAME"
 # ---------------------------------------------------------------------------
 
 echo
-echo "[2/5] CSV → JSONL"
+echo "[2/6] CSV → JSONL"
 if [[ ! -f "$RAW_CSV" ]]; then
     echo "  [ERROR] RAW_CSV not found: $RAW_CSV" >&2
     exit 1
@@ -111,7 +112,7 @@ fi
 # ---------------------------------------------------------------------------
 
 echo
-echo "[3/5] single-turn subset"
+echo "[3/6] single-turn subset"
 if [[ -f "$JSONL_SINGLE" && "$JSONL_SINGLE" -nt "$JSONL" && -z "$FORCE" ]]; then
     echo "  [SKIP] $JSONL_SINGLE is newer than $JSONL"
 else
@@ -125,7 +126,7 @@ fi
 # ---------------------------------------------------------------------------
 
 echo
-echo "[4/5] run 11 analyses (concurrency=${PARALLEL})"
+echo "[4/6] run 11 analyses (concurrency=${PARALLEL})"
 
 DASHBOARD_ANALYSES=(
     "f4_prefix:generate_f4_business.py"
@@ -197,21 +198,32 @@ fi
 # ---------------------------------------------------------------------------
 
 echo
-echo "[5/5] build_model_report"
-if python scripts/build_model_report.py \
+echo "[5/6] build_model_report"
+if ! python scripts/build_model_report.py \
         --model "$MODEL" \
         --data-root "$DATA_ROOT"; then
-    echo
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "Done. report.json: ${OUT_DIR}/report.json"
-    echo "Open dashboard:    streamlit run scripts/dashboard.py"
-    echo "  (already running? click 🔄 Reload data in sidebar)"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    if (( MISSING > 0 )); then
-        exit 2
-    fi
-    exit 0
-else
     echo "  [ERROR] build_model_report failed" >&2
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# 6. Render static HTML report
+# ---------------------------------------------------------------------------
+
+echo
+echo "[6/6] render static HTML"
+if ! python scripts/render_static_report.py --model "$MODEL"; then
+    echo "  [WARN] render_static_report failed; report.json is still usable" >&2
+fi
+
+echo
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Done."
+echo "  JSON  : ${OUT_DIR}/report.json"
+echo "  HTML  : ${OUT_DIR}/report.html  (open in any browser)"
+echo "  Streamlit (optional, dev): streamlit run scripts/dashboard.py"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if (( MISSING > 0 )); then
+    exit 2
+fi
+exit 0

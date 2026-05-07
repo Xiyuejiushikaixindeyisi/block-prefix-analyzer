@@ -1006,7 +1006,7 @@ streamlit --version    # ≥ 1.28
 
 ### 一键 Pipeline（推荐）
 
-每个新模型只需一行命令，自动跑 CSV→JSONL→single_turn→11 个分析→report.json，并行加速、幂等可恢复：
+每个新模型一行命令，自动跑 CSV→JSONL→single_turn→11 个分析→`report.json`→`report.html`。并行加速、幂等可恢复。
 
 ```bash
 # 把 CSV 放到 data/internal/<MODEL>/raw/<MODEL>.csv 后：
@@ -1022,11 +1022,18 @@ FORCE=1 scripts/run_dashboard_pipeline.sh <MODEL>
 PARALLEL=1 scripts/run_dashboard_pipeline.sh <MODEL>
 ```
 
-启动 dashboard（一次即可，新模型 build 完后侧边栏自动出现）：
+跑完后可以打开两种交付物：
 
 ```bash
+# 静态 HTML 报告（默认 / 推荐）— 单文件，所有图嵌入，无需服务器
+xdg-open outputs/maas/<MODEL>/report.html       # 或 macOS: open
+# 直接下载 outputs/maas/<MODEL>/report.html 到本地双击亦可
+
+# Streamlit dashboard（开发 / 探索用，可选）
 streamlit run scripts/dashboard.py
 ```
+
+**为什么默认是静态 HTML 而不是 Streamlit**：远程 ModelArts 通过 Jupyter proxy 访问 Streamlit 时延迟较大；静态 HTML 打开即所得，可分享、可归档、离线可用。Streamlit 仍保留给开发期想交互玩的场景。
 
 ### 手动分步 Pipeline（对照 / 排错用）
 
