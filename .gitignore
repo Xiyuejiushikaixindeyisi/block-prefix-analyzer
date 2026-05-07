@@ -42,6 +42,9 @@ Thumbs.db
 scratch/
 *.local.*
 
+# Streamlit secrets — defensive; never commit per-user tokens
+.streamlit/secrets.toml
+
 # Generated outputs (reproducible from source + data)
 outputs/
 
@@ -50,3 +53,7 @@ data/internal/
 
 # Public data files (large; download separately — keep .gitkeep)
 data/public/*.jsonl
+
+# Synthetic demo configs (the data/ and outputs/ side are already ignored above;
+# configs/maas/synthetic_demo/ would otherwise leak into the repo)
+configs/maas/synthetic_demo/
