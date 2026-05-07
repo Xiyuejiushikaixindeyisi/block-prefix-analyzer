@@ -977,6 +977,95 @@ outputs/maas/
 
 ---
 
+## Phase 1 Dashboard
+
+输入模型 slug → 自动产出 Streamlit 可视化报告（5 个 section：理想命中率 / 流量业务模式 / 时间局部性 / 可复用内容 / 自动建议）。完整设计与决策见 [可视化.md](./可视化.md)。
+
+### 安装
+
+```bash
+# 已装核心 + plots，再补 UI extras（streamlit + pandas）
+pip install -e ".[ui]"
+streamlit --version    # ≥ 1.28
+```
+
+### 完整 Pipeline（每个新模型一次）
+
+```bash
+MODEL=qwen_v3_5_27b_64k
+
+# 1) CSV → JSONL（chat_id / user_id / raw_prompt / timestamp 四列；
+#    converter 会自动 t -= min_timestamp 做窗口对齐）
+python scripts/convert_agent_csv_to_jsonl.py \
+    --input  data/internal/$MODEL/raw/$MODEL.csv \
+    --output data/internal/$MODEL/requests.jsonl \
+    --col-chat-id 0 --col-user-id 1 --col-raw-prompt 2 --col-timestamp 3 \
+    --has-header --encoding utf-8-sig
+
+# 2) 抽出单轮子集（turn_index == 0 流式过滤；F13 输入用此文件）
+python scripts/generate_single_turn_subset.py \
+    --input  data/internal/$MODEL/requests.jsonl \
+    --output data/internal/$MODEL/requests_single_turn.jsonl
+
+# 3) 跑 11 个分析（YAML 由 init_maas_configs 生成；首次手工补 traffic_pattern.yaml）
+python scripts/generate_f4_business.py        configs/maas/$MODEL/f4_prefix.yaml
+python scripts/generate_f13_business.py       configs/maas/$MODEL/f13_prefix.yaml
+python scripts/generate_f14_agent.py          configs/maas/$MODEL/f14_prefix.yaml
+python scripts/generate_f9.py                 configs/maas/$MODEL/f9_agent.yaml
+python scripts/generate_f10.py                configs/maas/$MODEL/f10_agent.yaml
+python scripts/generate_user_hit_rate.py      configs/maas/$MODEL/e1_user_hit_rate.yaml
+python scripts/generate_skewness.py           configs/maas/$MODEL/e1b_skewness.yaml
+python scripts/generate_reuse_rank_business.py configs/maas/$MODEL/reuse_rank.yaml
+python scripts/generate_reuse_distance.py     configs/maas/$MODEL/reuse_distance.yaml
+python scripts/generate_common_prefix.py      configs/maas/$MODEL/common_prefix.yaml
+python scripts/generate_traffic_pattern.py    configs/maas/$MODEL/traffic_pattern.yaml
+
+# 4) 聚合 → outputs/maas/$MODEL/report.json
+python scripts/build_model_report.py --model $MODEL
+# 或 --all 跑所有已分析模型
+
+# 5) 启动 dashboard
+streamlit run scripts/dashboard.py
+```
+
+### Block-size sweep 口径
+
+- **8k–32k 上下文模型必跑 4 档 sweep**：在 `e1_user_hit_rate.yaml` 写 `block_sizes: 16,32,64,128`。Dashboard §1 的 sweep 折线由此填充。
+- **64k+ 长上下文模型可降级为单档**：若 4 档 sweep 不可接受（内存/时长），改 `block_sizes: 128`。Dashboard 自动检测并显示"单档结果"提示。
+- 这与 F4 / F13 / F14 / reuse_distance 各自配置的**主 block_size**（通常 128）口径不同，dashboard 在 sweep 折线下方明确标注。
+
+### Dashboard 输出根可覆盖
+
+默认读 `outputs/maas/<model>/report.json`。需要指向合成 / staging 目录时：
+
+```bash
+BPA_OUTPUTS_ROOT=/tmp/staging_outputs streamlit run scripts/dashboard.py
+```
+
+### 单 / 多轮口径
+
+阶段一定义：`turn_index == 0` 为单轮（任意 chat 的第一轮），`turn_index > 0` 为多轮。
+
+- F13 喂 `requests_single_turn.jsonl`（步骤 2 产物）
+- F14 喂全量 `requests.jsonl`（其内部按 chat 长度过滤多轮）
+
+详见 [可视化.md §1 决策 #9](./可视化.md)。
+
+### content_type_guess 局限性
+
+8 类（`json_schema / agent_tool_prompt / system_prompt / rag_template / code / qa_template / long_document / other`）由 §4 优先级表的 regex + 启发式给出，目的仅是 KV cache 优化分类，**不是**通用语种 / 主题分类。误报可接受、漏报无害（最终 fallback 到 `other`）。
+
+### 输出范围（不会做的事）
+
+- ❌ Streamlit 内现算分析（性能 / 稳定性）
+- ❌ 多模型对比视图（阶段一单模型）
+- ❌ Plotly 交互图（先用 `st.line_chart` / `st.bar_chart`）
+- ❌ 自动重跑（数据变更检测）—— 重跑由人决定
+- ❌ F4 / F13 / F14 reusable 变体进 dashboard（业界非 prefix cache 仅实验）
+- ❌ e5_block_text 跑长上下文（64k+ 需 2h+，已用 common_prefix 替代）
+
+---
+
 ## 下一步
 查看 [PHASE2_PLAN.md](./PHASE2_PLAN.md) 了解 Phase 2 开发任务列表与接口约定。  
 查看 [EXPERIMENT_DESIGN.md](./EXPERIMENT_DESIGN.md) 了解完整实验设计方案。  
