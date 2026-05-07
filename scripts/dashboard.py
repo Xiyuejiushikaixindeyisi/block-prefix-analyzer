@@ -283,6 +283,170 @@ def _render_section_1(model_dir: Path, report: dict[str, Any]) -> None:
                 st.caption(f"CSV 缺失: `{csv_rel}`")
 
 
+def _read_csv_safely(model_dir: Path, csv_rel: str | None) -> pd.DataFrame | None:
+    """Read a CSV under ``model_dir/csv_rel``; return None on missing/error."""
+    if not csv_rel:
+        return None
+    path = model_dir / csv_rel
+    if not path.is_file():
+        return None
+    try:
+        return pd.read_csv(path)
+    except Exception:  # noqa: BLE001 — caller handles missing/None
+        return None
+
+
+def _render_section_2(model_dir: Path, report: dict[str, Any]) -> None:
+    st.header("2. 流量业务模式 (Traffic Pattern)")
+    s2 = report.get("section_2_traffic")
+    if not s2:
+        st.info("Section 2 未生成 — traffic_pattern / F9 / F10 都没跑。")
+        return
+
+    # ---- Request interval percentiles ----
+    intervals = s2.get("request_interval_seconds")
+    st.subheader("Inter-arrival intervals (s)")
+    if not intervals:
+        st.caption("traffic_pattern.interval_percentiles 缺失。")
+    else:
+        cols = st.columns(4)
+        cols[0].metric("p50", f"{float(intervals.get('p50', 0)):.3f}")
+        cols[1].metric("p75", f"{float(intervals.get('p75', 0)):.3f}")
+        cols[2].metric("p80", f"{float(intervals.get('p80', 0)):.3f}")
+        cols[3].metric("p95", f"{float(intervals.get('p95', 0)):.3f}")
+        if float(intervals.get("p50", 1)) == 0:
+            st.warning(
+                "request_interval_p50 = 0s — 同秒并发主导。理想命中率上限"
+                "可能虚高，请结合 W-SAME-SECOND 警告解读。"
+            )
+
+    st.divider()
+
+    # ---- Volume timeseries ----
+    rvt = s2.get("request_volume_timeseries") or {}
+    st.subheader("Request volume over time")
+    bin_size_s = rvt.get("bin_size_s")
+    if bin_size_s:
+        st.caption(f"Bin size: {bin_size_s}s")
+    df = _read_csv_safely(model_dir, rvt.get("csv_path"))
+    if df is None or "bin_start_s" not in df.columns or "request_count" not in df.columns:
+        st.caption("volume.csv 不可用或列不正确。")
+    elif df.empty:
+        st.caption("volume.csv 为空。")
+    else:
+        st.line_chart(df.set_index("bin_start_s")[["request_count"]])
+
+    st.divider()
+
+    # ---- Block write-rate timeseries ----
+    bwr = s2.get("block_write_rate") or {}
+    st.subheader("New unique blocks per second")
+    total_unique = bwr.get("total_unique_blocks")
+    if total_unique is not None:
+        st.caption(f"Total unique blocks across the trace: {total_unique:,}")
+    df = _read_csv_safely(model_dir, bwr.get("csv_path"))
+    if df is None or "second" not in df.columns or "new_unique_blocks" not in df.columns:
+        st.caption("write_rate.csv 不可用或列不正确。")
+    elif df.empty:
+        st.caption("write_rate.csv 为空。")
+    else:
+        st.line_chart(df.set_index("second")[["new_unique_blocks"]])
+
+    st.divider()
+
+    # ---- Working set bar chart ----
+    ws = s2.get("working_set") or {}
+    st.subheader("Working set (unique blocks within leading window)")
+    windows = ws.get("windows_min") or []
+    blocks = ws.get("unique_blocks") or []
+    if not windows or len(windows) != len(blocks):
+        st.caption("working_set 数据缺失或长度不匹配。")
+    else:
+        ws_df = pd.DataFrame(
+            {"unique_blocks": blocks},
+            index=[f"{w} min" for w in windows],
+        )
+        st.bar_chart(ws_df)
+        st.caption(
+            "Window 含义：``[t_min, t_min + W*60)`` 起点对齐窗口；表示"
+            "「拉满该窗口内全部 reuse 所需的最小 KV cache 容量」。"
+        )
+
+    st.divider()
+
+    # ---- Session structure (F9 + F10) ----
+    sess = s2.get("session_structure") or {}
+    st.subheader("Session structure (F9 / F10)")
+    if not sess:
+        st.caption("session_structure 不可用 — F9/F10 都没跑。")
+    else:
+        _render_f9(model_dir, sess.get("f9_turn_count_cdf"))
+        _render_f10(model_dir, sess.get("f10_user_turn_stats"))
+
+
+def _render_f9(model_dir: Path, f9: dict[str, Any] | None) -> None:
+    st.markdown("**F9 — turn-count CDF**")
+    if not f9:
+        st.caption("F9 未跑。")
+        return
+    cols = st.columns(5)
+    cols[0].metric("Total sessions", f"{int(f9.get('total_sessions') or 0):,}")
+    cols[1].metric("Single-turn", f"{int(f9.get('single_turn_sessions') or 0):,}")
+    cols[2].metric("Multi-turn",  f"{int(f9.get('multi_turn_sessions') or 0):,}")
+    cols[3].metric("Max turns", str(f9.get("max_turns") or "—"))
+    mean_turns = f9.get("mean_turns")
+    cols[4].metric(
+        "Mean turns",
+        f"{float(mean_turns):.2f}" if mean_turns is not None else "—",
+    )
+
+    df = _read_csv_safely(model_dir, f9.get("cdf_csv"))
+    if df is None or "turn_count" not in df.columns or "cumulative_fraction" not in df.columns:
+        st.caption("f9_cdf.csv 不可用或列不正确。")
+    elif df.empty:
+        st.caption("f9_cdf.csv 为空。")
+    else:
+        st.line_chart(df.set_index("turn_count")[["cumulative_fraction"]])
+
+
+def _render_f10(model_dir: Path, f10: dict[str, Any] | None) -> None:
+    st.markdown("**F10 — per-user turn statistics**")
+    if not f10:
+        st.caption("F10 未跑。")
+        return
+    cols = st.columns(4)
+    cols[0].metric("Users", str(f10.get("total_users") or "—"))
+    mean_overall = f10.get("mean_turns_overall")
+    std_overall = f10.get("std_turns_overall")
+    cols[1].metric(
+        "Mean turns / user",
+        f"{float(mean_overall):.2f}" if mean_overall is not None else "—",
+    )
+    cols[2].metric(
+        "Std turns / user",
+        f"{float(std_overall):.2f}" if std_overall is not None else "—",
+    )
+    top10 = f10.get("lorenz_top10_pct_share_of_turns")
+    cols[3].metric(
+        "Top-10% turn share",
+        f"{float(top10):.2%}" if top10 is not None else "—",
+        help="Top 10% 用户的轮次占总轮次的比例（Lorenz 曲线右尾）。"
+             "> 60% 时配合 F9 mean_turns > 3 触发 R-MULTI-TENANT 建议。",
+    )
+
+    df = _read_csv_safely(model_dir, f10.get("csv_path"))
+    if df is None or "rank" not in df.columns or "cumulative_fraction" not in df.columns:
+        st.caption("f10_mean_turns.csv 不可用或列不正确。")
+    elif df.empty:
+        st.caption("f10_mean_turns.csv 为空。")
+    else:
+        st.line_chart(df.set_index("rank")[["cumulative_fraction"]])
+        st.caption(
+            "Lorenz 曲线（按 mean_turns 升序）：横轴用户排名，纵轴累计 turn 占比。"
+            "曲线越下凹 → 头部租户越主导。"
+        )
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Prefix Cache Dashboard",
@@ -309,11 +473,7 @@ def main() -> None:
     _render_section_1(model_dir, report)
     st.divider()
 
-    _render_placeholder(
-        "2. 流量业务模式 (Traffic Pattern)",
-        "Step 11 will wire: interval 分位 + volume timeseries + "
-        "write rate + working set + F9/F10 会话结构。",
-    )
+    _render_section_2(model_dir, report)
     _render_placeholder(
         "3. KV cache 时间局部性 (Locality)",
         "Step 12 will wire: F13 / F14 / reuse_distance 三张 CDF + 分位表。",

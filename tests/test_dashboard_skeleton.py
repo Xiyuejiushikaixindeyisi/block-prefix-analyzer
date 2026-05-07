@@ -127,3 +127,36 @@ def test_histogram_frame_drops_non_numeric(dashboard):
     s = pd.Series([0.1, "bad", 0.5, None, 0.9])
     df = dashboard.histogram_frame(s, bins=4)
     assert df["count"].sum() == 3            # only the 3 numeric values
+
+
+# ---------------------------------------------------------------------------
+# _read_csv_safely (Step 11 helper)
+# ---------------------------------------------------------------------------
+
+def test_read_csv_safely_returns_dataframe(tmp_path: Path, dashboard):
+    csv_path = tmp_path / "sub" / "data.csv"
+    csv_path.parent.mkdir(parents=True)
+    csv_path.write_text("a,b\n1,2\n3,4\n")
+    df = dashboard._read_csv_safely(tmp_path, "sub/data.csv")
+    assert df is not None
+    assert list(df.columns) == ["a", "b"]
+    assert len(df) == 2
+
+
+def test_read_csv_safely_returns_none_for_missing(tmp_path: Path, dashboard):
+    assert dashboard._read_csv_safely(tmp_path, "missing.csv") is None
+
+
+def test_read_csv_safely_returns_none_for_empty_path(tmp_path: Path, dashboard):
+    assert dashboard._read_csv_safely(tmp_path, None) is None
+    assert dashboard._read_csv_safely(tmp_path, "") is None
+
+
+def test_read_csv_safely_returns_none_on_corrupt_csv(tmp_path: Path, dashboard):
+    bad = tmp_path / "bad.csv"
+    # File present but unreadable as csv (invalid bytes).
+    bad.write_bytes(b"\xff\xfe\xfd not csv \x00\x01")
+    # Pandas may or may not raise on this; the safe wrapper either way must
+    # not propagate the exception. Returning None or an empty df is fine.
+    out = dashboard._read_csv_safely(tmp_path, "bad.csv")
+    assert out is None or out.empty
