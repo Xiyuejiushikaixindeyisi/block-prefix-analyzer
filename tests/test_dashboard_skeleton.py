@@ -160,3 +160,41 @@ def test_read_csv_safely_returns_none_on_corrupt_csv(tmp_path: Path, dashboard):
     # not propagate the exception. Returning None or an empty df is fine.
     out = dashboard._read_csv_safely(tmp_path, "bad.csv")
     assert out is None or out.empty
+
+
+# ---------------------------------------------------------------------------
+# events_to_cdf (Step 12 helper)
+# ---------------------------------------------------------------------------
+
+def test_events_to_cdf_basic(dashboard):
+    import pandas as pd
+    s = pd.Series([10, 20, 30, 40, 50])
+    df = dashboard.events_to_cdf(s)
+    # Index = sorted distinct values; cdf monotone, ends at 1.0.
+    assert list(df.index) == [10, 20, 30, 40, 50]
+    assert df["cdf"].iloc[0] == pytest.approx(0.2)
+    assert df["cdf"].iloc[-1] == pytest.approx(1.0)
+    assert df["cdf"].is_monotonic_increasing
+
+
+def test_events_to_cdf_collapses_duplicates(dashboard):
+    import pandas as pd
+    s = pd.Series([10, 10, 20, 20, 30])
+    df = dashboard.events_to_cdf(s)
+    # 5 events; CDF at 10 = 2/5, at 20 = 4/5, at 30 = 1.0
+    assert list(df.index) == [10, 20, 30]
+    assert df["cdf"].tolist() == pytest.approx([0.4, 0.8, 1.0])
+
+
+def test_events_to_cdf_empty_input(dashboard):
+    import pandas as pd
+    df = dashboard.events_to_cdf(pd.Series([], dtype=float))
+    assert df.empty
+
+
+def test_events_to_cdf_drops_non_numeric(dashboard):
+    import pandas as pd
+    s = pd.Series([10, "bad", 20, None, 30])
+    df = dashboard.events_to_cdf(s)
+    assert list(df.index) == [10, 20, 30]
+    assert df["cdf"].iloc[-1] == pytest.approx(1.0)

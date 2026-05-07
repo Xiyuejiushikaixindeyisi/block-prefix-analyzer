@@ -409,6 +409,157 @@ def _render_f9(model_dir: Path, f9: dict[str, Any] | None) -> None:
         st.line_chart(df.set_index("turn_count")[["cumulative_fraction"]])
 
 
+def events_to_cdf(values: pd.Series) -> pd.DataFrame:
+    """Empirical CDF DataFrame for a numeric series.
+
+    Returns a DataFrame indexed by the *sorted distinct* values with one
+    ``cdf`` column. Duplicate input values collapse to the highest cdf at
+    that value (i.e. ``cdf[v] = P[X ≤ v]``).
+    """
+    cleaned = pd.to_numeric(values, errors="coerce").dropna().sort_values()
+    if cleaned.empty:
+        return pd.DataFrame(columns=["cdf"])
+    n = len(cleaned)
+    ranks = pd.Series(range(1, n + 1), index=cleaned.values, dtype="float64") / n
+    deduped = ranks.groupby(level=0).max()
+    return pd.DataFrame({"cdf": deduped.values}, index=deduped.index)
+
+
+def _render_cdf_chart(df: pd.DataFrame) -> None:
+    """Render an F13/F14 CDF chart from a cdf_series.csv DataFrame.
+
+    Honours the ``request_type`` column when present (one line per type);
+    otherwise plots a single ``cdf`` line vs ``reuse_time_seconds``.
+    """
+    if "reuse_time_seconds" not in df.columns or "cdf" not in df.columns:
+        st.caption(f"CDF csv 缺少必要列；列名: {list(df.columns)}")
+        return
+    if df.empty:
+        st.caption("CDF csv 为空。")
+        return
+    if "request_type" in df.columns and df["request_type"].nunique() > 1:
+        wide = df.pivot_table(
+            index="reuse_time_seconds",
+            columns="request_type",
+            values="cdf",
+            aggfunc="max",
+        ).sort_index()
+        st.line_chart(wide)
+    else:
+        st.line_chart(
+            df.set_index("reuse_time_seconds")[["cdf"]].sort_index()
+        )
+
+
+def _render_stats_strip(stats: dict[str, Any] | None,
+                         keys: list[str], unit: str = "") -> None:
+    if not stats:
+        st.caption("分位数据缺失。")
+        return
+    cols = st.columns(len(keys))
+    for col, k in zip(cols, keys):
+        v = stats.get(k)
+        col.metric(k, f"{float(v):.2f}{unit}" if v is not None else "—")
+
+
+def _render_section_3(model_dir: Path, report: dict[str, Any]) -> None:
+    st.header("3. KV cache 时间局部性 (Locality)")
+    s3 = report.get("section_3_locality")
+    if not s3:
+        st.info("Section 3 未生成 — F13 / F14 / reuse_distance 都没跑。")
+        return
+
+    # ---- F13 single-turn reuse-time CDF ----
+    f13 = s3.get("f13_single_turn")
+    st.subheader("F13 — single-turn reuse-time CDF")
+    if not f13:
+        st.caption("F13 未跑。")
+    else:
+        st.caption(f"input_definition: `{f13.get('input_definition', '—')}`")
+        cnt = f13.get("single_turn_request_count")
+        if cnt is not None:
+            st.caption(f"single_turn_request_count: {int(cnt):,}")
+        _render_stats_strip(f13.get("stats_seconds"),
+                            ["p50", "p75", "p80", "p95"], unit=" s")
+        df = _read_csv_safely(model_dir, f13.get("cdf_csv"))
+        if df is None:
+            st.caption(f"cdf_series.csv 不可用: `{f13.get('cdf_csv')}`")
+        else:
+            _render_cdf_chart(df)
+
+    st.divider()
+
+    # ---- F14 multi-turn reuse-time CDF ----
+    f14 = s3.get("f14_multi_turn")
+    st.subheader("F14 — multi-turn reuse-time CDF")
+    if not f14:
+        st.caption("F14 未跑。")
+    else:
+        st.caption(f"input_definition: `{f14.get('input_definition', '—')}`")
+        _render_stats_strip(f14.get("stats_seconds"),
+                            ["p50", "p75", "p80", "p95"], unit=" s")
+        df = _read_csv_safely(model_dir, f14.get("cdf_csv"))
+        if df is None:
+            st.caption(f"cdf_series.csv 不可用: `{f14.get('cdf_csv')}`")
+        else:
+            _render_cdf_chart(df)
+
+    st.divider()
+
+    # ---- reuse_distance: cache pressure indicator ----
+    rd = s3.get("reuse_distance")
+    st.subheader("Reuse distance — cache pressure indicator")
+    if not rd:
+        st.caption("reuse_distance 未跑。")
+        return
+
+    st.caption(
+        rd.get("purpose")
+        or "两个 reuse 事件之间插入的 unique block 数；超过 cache 容量时会"
+           "触发 LRU 早淘汰。"
+    )
+
+    cap = rd.get("available_cache_blocks")
+    evicted = rd.get("evicted_under_lru")
+    frac = rd.get("evicted_fraction")
+    cap_cols = st.columns(3)
+    cap_cols[0].metric(
+        "Available cache blocks",
+        f"{int(cap):,}" if cap is not None else "未配置",
+    )
+    cap_cols[1].metric(
+        "Evicted under LRU",
+        f"{int(evicted):,}" if evicted is not None else "—",
+    )
+    cap_cols[2].metric(
+        "Evicted fraction",
+        f"{float(frac):.2%}" if frac is not None else "—",
+    )
+    if cap is None:
+        st.caption(
+            "ℹ️ `available_cache_blocks` 未配置 — 在 reuse_distance YAML "
+            "里填 vLLM 启动日志的 `num_gpu_blocks` 后重跑可得到精确淘汰估计。"
+        )
+
+    st.markdown("**Reuse distance percentiles (blocks)**")
+    _render_stats_strip(rd.get("stats_blocks"),
+                        ["p25", "p50", "p80", "p95"], unit="")
+    st.markdown("**Reuse time percentiles for reference (s)**")
+    _render_stats_strip(rd.get("reuse_time_stats"),
+                        ["p50", "p80", "p95"], unit=" s")
+
+    df = _read_csv_safely(model_dir, rd.get("events_csv"))
+    if df is None or "reuse_distance_blocks" not in df.columns:
+        st.caption(f"events.csv 不可用: `{rd.get('events_csv')}`")
+        return
+    cdf_df = events_to_cdf(df["reuse_distance_blocks"])
+    if cdf_df.empty:
+        st.caption("reuse_distance events 为空。")
+    else:
+        cdf_df.index.name = "reuse_distance_blocks"
+        st.line_chart(cdf_df)
+
+
 def _render_f10(model_dir: Path, f10: dict[str, Any] | None) -> None:
     st.markdown("**F10 — per-user turn statistics**")
     if not f10:
@@ -474,10 +625,11 @@ def main() -> None:
     st.divider()
 
     _render_section_2(model_dir, report)
-    _render_placeholder(
-        "3. KV cache 时间局部性 (Locality)",
-        "Step 12 will wire: F13 / F14 / reuse_distance 三张 CDF + 分位表。",
-    )
+    st.divider()
+
+    _render_section_3(model_dir, report)
+    st.divider()
+
     _render_placeholder(
         "4. 可复用内容 (Content)",
         "Step 13 will wire: common_prefix top-N 共识块 + content_type_guess。",
