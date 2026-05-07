@@ -198,3 +198,53 @@ def test_events_to_cdf_drops_non_numeric(dashboard):
     df = dashboard.events_to_cdf(s)
     assert list(df.index) == [10, 20, 30]
     assert df["cdf"].iloc[-1] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# consensus_blocks_to_frame (Step 13 helper)
+# ---------------------------------------------------------------------------
+
+def test_consensus_blocks_to_frame_empty(dashboard):
+    df = dashboard.consensus_blocks_to_frame([])
+    assert df.empty
+    assert list(df.columns) == [
+        "rank", "position", "count", "coverage_pct", "type", "text_preview",
+    ]
+
+
+def test_consensus_blocks_to_frame_basic(dashboard):
+    blocks = [
+        {"rank": 1, "position": 0, "count": 100, "coverage_pct": 95.5,
+         "content_type_guess": "system_prompt", "text_preview": "你是 ..."},
+        {"rank": 2, "position": 1, "count": 90, "coverage_pct": 88.2,
+         "content_type_guess": "code", "text_preview": "def foo(): ..."},
+    ]
+    df = dashboard.consensus_blocks_to_frame(blocks)
+    assert len(df) == 2
+    assert df.iloc[0]["rank"] == 1
+    assert df.iloc[0]["coverage_pct"] == 95.5
+    # type column carries an emoji prefix from CONTENT_TYPE_EMOJI.
+    assert "system_prompt" in df.iloc[0]["type"]
+    assert df.iloc[0]["type"].startswith("🧭")
+    assert df.iloc[1]["type"].startswith("💻")
+
+
+def test_consensus_blocks_to_frame_handles_missing_fields(dashboard):
+    blocks = [
+        {"rank": 1},                                # missing everything else
+        {"position": 0, "content_type_guess": "unknown_label"},  # unknown type
+    ]
+    df = dashboard.consensus_blocks_to_frame(blocks)
+    assert len(df) == 2
+    # Missing text_preview becomes empty string, not None.
+    assert df.iloc[0]["text_preview"] == ""
+    # Unknown type still renders with the fallback bullet.
+    assert df.iloc[1]["type"].startswith("·")
+    assert "unknown_label" in df.iloc[1]["type"]
+
+
+def test_consensus_blocks_to_frame_falls_back_to_other_when_type_missing(dashboard):
+    df = dashboard.consensus_blocks_to_frame([
+        {"rank": 1, "text_preview": "x"}
+    ])
+    assert df.iloc[0]["type"].endswith("other")

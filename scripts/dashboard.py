@@ -560,6 +560,118 @@ def _render_section_3(model_dir: Path, report: dict[str, Any]) -> None:
         st.line_chart(cdf_df)
 
 
+CONTENT_TYPE_EMOJI: dict[str, str] = {
+    "json_schema":       "🧩",
+    "agent_tool_prompt": "🔧",
+    "system_prompt":     "🧭",
+    "rag_template":      "📚",
+    "code":              "💻",
+    "qa_template":       "❓",
+    "long_document":     "📄",
+    "other":             "·",
+}
+
+
+def consensus_blocks_to_frame(consensus_blocks: list[dict]) -> pd.DataFrame:
+    """Project the consensus_blocks list into a stable display DataFrame.
+
+    Columns: rank, position, count, coverage_pct, type, text_preview.
+    Missing fields render as None / empty so st.dataframe doesn't choke.
+    """
+    if not consensus_blocks:
+        return pd.DataFrame(columns=[
+            "rank", "position", "count", "coverage_pct",
+            "type", "text_preview",
+        ])
+    rows = []
+    for cb in consensus_blocks:
+        ctype = cb.get("content_type_guess") or "other"
+        emoji = CONTENT_TYPE_EMOJI.get(ctype, "·")
+        rows.append({
+            "rank": cb.get("rank"),
+            "position": cb.get("position"),
+            "count": cb.get("count"),
+            "coverage_pct": cb.get("coverage_pct"),
+            "type": f"{emoji} {ctype}",
+            "text_preview": cb.get("text_preview") or "",
+        })
+    return pd.DataFrame(rows)
+
+
+def _render_section_4(model_dir: Path, report: dict[str, Any]) -> None:
+    st.header("4. 可复用内容 (Content)")
+    s4 = report.get("section_4_content")
+    if not s4:
+        st.info("Section 4 未生成 — common_prefix 没跑。")
+        return
+
+    # ---- top metric strip ----
+    cols = st.columns(4)
+    cols[0].metric(
+        "Prefix length",
+        f"{s4.get('prefix_length_blocks') or 0} blocks",
+    )
+    cols[1].metric(
+        "Prefix chars",
+        f"{int(s4.get('prefix_length_chars') or 0):,}",
+    )
+    mean_cov = s4.get("mean_coverage_pct")
+    cols[2].metric(
+        "Mean coverage",
+        f"{float(mean_cov):.2f}%" if mean_cov is not None else "—",
+    )
+    min_count = s4.get("min_count_threshold")
+    cols[3].metric(
+        "min_count threshold",
+        str(min_count) if min_count is not None else "—",
+    )
+    st.caption(
+        f"source: `{s4.get('source', '—')}` · 共识前缀阈值 = "
+        "「同位置出现该 block_id 的请求数 ≥ min_count」。"
+    )
+
+    # ---- decoded text preview ----
+    preview = s4.get("decoded_text_preview") or ""
+    with st.expander("Decoded prefix text preview (前 500 字符)", expanded=False):
+        if preview:
+            st.code(preview, language=None)
+        else:
+            st.caption("decoded_text_preview 为空 — 检查 consensus_prefix.txt 是否存在。")
+
+    st.divider()
+
+    # ---- consensus blocks table ----
+    blocks = s4.get("consensus_blocks") or []
+    st.subheader(f"Top {len(blocks)} consensus blocks")
+    if not blocks:
+        st.caption("没有共识 block — 检查 coverage_profile.csv 是否生成。")
+        return
+
+    df = consensus_blocks_to_frame(blocks)
+    st.dataframe(
+        df,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "rank":          st.column_config.NumberColumn("rank", width="small"),
+            "position":      st.column_config.NumberColumn("position", width="small"),
+            "count":         st.column_config.NumberColumn("count", width="small"),
+            "coverage_pct":  st.column_config.NumberColumn(
+                "coverage %", format="%.2f", width="small"
+            ),
+            "type":          st.column_config.TextColumn("content_type_guess",
+                                                          width="medium"),
+            "text_preview":  st.column_config.TextColumn("text_preview",
+                                                          width="large"),
+        },
+    )
+    st.caption(
+        "content_type_guess 为粗启发式（json_schema / agent_tool_prompt / "
+        "system_prompt / rag_template / code / qa_template / long_document / "
+        "other），按 §4 优先级首匹配。"
+    )
+
+
 def _render_f10(model_dir: Path, f10: dict[str, Any] | None) -> None:
     st.markdown("**F10 — per-user turn statistics**")
     if not f10:
@@ -630,10 +742,9 @@ def main() -> None:
     _render_section_3(model_dir, report)
     st.divider()
 
-    _render_placeholder(
-        "4. 可复用内容 (Content)",
-        "Step 13 will wire: common_prefix top-N 共识块 + content_type_guess。",
-    )
+    _render_section_4(model_dir, report)
+    st.divider()
+
     _render_placeholder(
         "5. 优化建议 (Recommendations)",
         "Step 14 will wire: P0/P1/P2 + Warning 卡片，按优先级分组。",
