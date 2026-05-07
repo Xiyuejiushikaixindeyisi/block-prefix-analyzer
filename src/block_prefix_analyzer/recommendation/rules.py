@@ -3,7 +3,7 @@
 Each rule is a pure function ``(report: dict) -> Recommendation | None``.
 A rule returns ``None`` when its input data is missing OR when the
 trigger condition is not met. Triggers and outputs are frozen by the
-user-confirmed ``可视化.md §5`` table.
+user-confirmed ``docs/可视化.md §5`` table.
 
 Rule catalog (priority then alphabetical):
 

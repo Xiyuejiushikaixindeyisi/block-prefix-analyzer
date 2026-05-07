@@ -1,5 +1,20 @@
 # block-prefix-analyzer
 
+## 项目文档地图
+
+| 位置 | 内容 |
+|---|---|
+| [README.md](./README.md) | 安装、设计目标、快速开始、各阶段使用说明（本文件） |
+| [CLAUDE.md](./CLAUDE.md) | 当前阶段 Claude Code 协作守则与硬约束 |
+| [PROJECT_SPEC_FOR_CLAUDE.md](./PROJECT_SPEC_FOR_CLAUDE.md) | 早期项目规范（已被 CLAUDE.md 覆盖，保留作为历史依据） |
+| [docs/AGENT_ANALYSIS_GUIDE.md](./docs/AGENT_ANALYSIS_GUIDE.md) | Agent 数据集分析路径概览 |
+| [docs/CAPABILITIES.md](./docs/CAPABILITIES.md) | 核心库当前能力清单（V1/V2 + Phase 2.5 索引基准） |
+| [docs/V4_plan.md](./docs/V4_plan.md) | Phase 4 实验计划（多机房 / 路由 / 多级缓存） |
+| [docs/V4_runbook.md](./docs/V4_runbook.md) | V4 模块 1/2/3 操作手册 |
+| [docs/kv_cache_eviction_design.md](./docs/kv_cache_eviction_design.md) | Two-Queue TTL KV cache 淘汰算法设计 (v1.0) |
+| [docs/two_queue_ttl_experiment_plan.md](./docs/two_queue_ttl_experiment_plan.md) | Two-Queue TTL 实验计划 v1.1（F13 锚定 TTL + registry） |
+| [docs/可视化.md](./docs/可视化.md) | Phase 1 Dashboard 实施计划 + 全部设计决策 |
+
 离线分析 LLM 请求 trace 中 **block 级前缀复用** 的工具。
 
 当前状态：**V1 完整 + V2-min 完整 + Phase 2 全部完成 + Phase 2.5 完成 — 670 个测试全部通过（10 个 xfail 为预期 pending）**。
@@ -979,7 +994,7 @@ outputs/maas/
 
 ## Phase 1 Dashboard
 
-输入模型 slug → 自动产出 Streamlit 可视化报告（5 个 section：理想命中率 / 流量业务模式 / 时间局部性 / 可复用内容 / 自动建议）。完整设计与决策见 [可视化.md](./可视化.md)。
+输入模型 slug → 自动产出 Streamlit 可视化报告（5 个 section：理想命中率 / 流量业务模式 / 时间局部性 / 可复用内容 / 自动建议）。完整设计与决策见 [docs/可视化.md](./docs/可视化.md)。
 
 ### 安装
 
@@ -1066,7 +1081,7 @@ streamlit config show | grep -E "^address|^gatherUsageStats"
 - F13 喂 `requests_single_turn.jsonl`（步骤 2 产物）
 - F14 喂全量 `requests.jsonl`（其内部按 chat 长度过滤多轮）
 
-详见 [可视化.md §1 决策 #9](./可视化.md)。
+详见 [docs/可视化.md §1 决策 #9](./docs/可视化.md)。
 
 ### content_type_guess 局限性
 

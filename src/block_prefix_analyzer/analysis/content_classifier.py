@@ -2,7 +2,7 @@
 
 Maps a decoded text snippet (typically a common_prefix consensus block) to
 one of 8 fixed labels. Priority order is frozen in
-``可视化.md §4`` and matches the user-confirmed spec; the first matching rule
+``docs/可视化.md §4`` and matches the user-confirmed spec; the first matching rule
 wins (no scoring, no aggregation).
 
 Output labels (priority high → low)

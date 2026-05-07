@@ -9,7 +9,7 @@ Run
     pip install -e .[ui]
     streamlit run scripts/dashboard.py
 
-Per ``可视化.md §1`` decisions:
+Per ``docs/可视化.md §1`` decisions:
 * Local developer self-use only — no auth, no refresh button, no live
   reload.
 * Dashboard reads ``outputs/maas/<model>/report.json`` exclusively. All

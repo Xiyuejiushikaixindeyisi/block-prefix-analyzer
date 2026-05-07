@@ -2,7 +2,7 @@
 
 Reads the metadata + CSV outputs of all phase-1 analyses under
 ``outputs/maas/<model>/`` and assembles the schema described in
-``可视化.md §3``. Missing analyses are tolerated: each section falls back to
+``docs/可视化.md §3``. Missing analyses are tolerated: each section falls back to
 ``None`` (or partial dicts with ``None`` subfields) without raising.
 
 This module covers Step 5 only — the ``section_5_recommendations`` array is
@@ -30,7 +30,7 @@ Inputs read (all optional)
 
 Schema produced
 ---------------
-v1.1 — see ``可视化.md §3`` for the full layout.
+v1.1 — see ``docs/可视化.md §3`` for the full layout.
 """
 from __future__ import annotations
 

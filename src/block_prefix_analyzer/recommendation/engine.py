@@ -13,7 +13,7 @@ Recommendations sort by ``(priority_rank, rule_id)``:
 So warnings always appear after recommendations. Within the same priority,
 sort is alphabetical by ``rule_id`` for stability.
 
-Output dict shape (matches ``可视化.md §3 section_5_recommendations``)
+Output dict shape (matches ``docs/可视化.md §3 section_5_recommendations``)
 ---------------------------------------------------------------------
 ``Recommendation.to_dict()`` produces::
 
