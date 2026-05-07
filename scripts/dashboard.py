@@ -23,7 +23,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import streamlit as st
+
+
+SECTION_1_CALIBER_NOTE = (
+    "⚠️ Block-size sweep 来自 e1_user_hit_rate（4 档），F4 大数字使用配置的主 "
+    "block_size。两者口径不同，请勿直接对比绝对数值。"
+)
+HISTOGRAM_BINS = 20
 
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -53,6 +61,28 @@ def load_report(outputs_root: Path, model_id: str) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
+
+
+def histogram_frame(values: pd.Series, bins: int = HISTOGRAM_BINS) -> pd.DataFrame:
+    """Bin a numeric series into ``bins`` equal-width buckets.
+
+    Returns a DataFrame indexed by the bucket's left edge (formatted to 4
+    decimals so float labels stay readable in ``st.bar_chart``). Empty or
+    constant inputs return an empty DataFrame so the caller can branch on
+    ``df.empty``.
+    """
+    cleaned = pd.to_numeric(values, errors="coerce").dropna()
+    if cleaned.empty:
+        return pd.DataFrame(columns=["count"])
+    if cleaned.min() == cleaned.max():
+        # cut() refuses a degenerate range; treat as a single-bucket case.
+        return pd.DataFrame({"count": [len(cleaned)]},
+                            index=[f"{cleaned.iloc[0]:.4f}"])
+    binned = pd.cut(cleaned, bins=bins).value_counts().sort_index()
+    return pd.DataFrame(
+        {"count": binned.values},
+        index=[f"{interval.left:.4f}" for interval in binned.index],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +145,144 @@ def _render_placeholder(header: str, body: str) -> None:
     st.info(body)
 
 
+def _render_section_1(model_dir: Path, report: dict[str, Any]) -> None:
+    st.header("1. 理想命中率 (Ideal Hit Rate)")
+    s1 = report.get("section_1_ideal_hit")
+    if not s1:
+        st.info("Section 1 未生成 — F4 / e1 / reuse_rank 都没跑。")
+        return
+
+    # ---- F4 big-number card ----
+    f4 = s1.get("f4_overall")
+    if f4 and f4.get("ideal_hit_ratio") is not None:
+        cols = st.columns(3)
+        cols[0].metric(
+            "Ideal hit ratio (F4)",
+            f"{float(f4['ideal_hit_ratio']):.2%}",
+        )
+        cols[1].metric("Main block_size", str(f4.get("block_size") or "—"))
+        cols[2].metric(
+            "Hit definition",
+            f4.get("hit_definition") or "—",
+            help=("content_prefix_reuse = 无限容量 vLLM APC 等价命中数。"
+                  "content_block_reuse = 任意位置 reuse，并非 vLLM hit。"),
+        )
+    else:
+        st.caption("F4 未跑 — 大数字卡片无数据。")
+
+    st.divider()
+
+    # ---- block_size sweep ----
+    sweep = s1.get("block_size_sweep")
+    st.subheader("Block-size sensitivity")
+    if not sweep:
+        st.caption("e1_user_hit_rate 未跑 — 跳过 sweep。")
+    elif sweep.get("sweep_available"):
+        df = pd.DataFrame({
+            "block_size": sweep["block_sizes"],
+            "micro_hit_rate": sweep["micro_hit_rate"],
+        }).set_index("block_size")
+        st.line_chart(df, y="micro_hit_rate")
+        st.caption(SECTION_1_CALIBER_NOTE)
+    else:
+        bsz = sweep["block_sizes"][0] if sweep.get("block_sizes") else "—"
+        rate = sweep["micro_hit_rate"][0] if sweep.get("micro_hit_rate") else None
+        rate_str = f"{float(rate):.2%}" if rate is not None else "—"
+        st.info(
+            f"e1_user_hit_rate 仅跑了单档 block_size={bsz}，"
+            f"micro_hit_rate={rate_str}。\n\n"
+            "需要 sweep 视图时，把 YAML 改为 `block_sizes: 16,32,64,128` 重跑。"
+        )
+
+    st.divider()
+
+    # ---- per-user hit-rate distribution ----
+    uhd = s1.get("user_hit_distribution")
+    st.subheader("Per-user hit-rate distribution")
+    if not uhd or not uhd.get("stats"):
+        st.caption("user_hit_distribution 不可用。")
+    else:
+        stats = uhd["stats"]
+        cols = st.columns(4)
+        cols[0].metric("p50", f"{float(stats.get('p50', 0)):.2%}")
+        cols[1].metric("p80", f"{float(stats.get('p80', 0)):.2%}")
+        cols[2].metric("max", f"{float(stats.get('max', 0)):.2%}")
+        cols[3].metric("Users", str(stats.get("user_count", "—")))
+
+        csv_rel = uhd.get("csv_path")
+        if csv_rel:
+            csv_path = model_dir / csv_rel
+            if csv_path.is_file():
+                try:
+                    df = pd.read_csv(csv_path)
+                    col = next((c for c in ("hit_rate", "ideal_hit_rate",
+                                             "prefix_hit_rate")
+                                if c in df.columns), None)
+                    if col is None:
+                        st.caption(
+                            f"未找到 hit_rate 列；CSV 列名: {list(df.columns)}"
+                        )
+                    else:
+                        chart_df = histogram_frame(df[col])
+                        if chart_df.empty:
+                            st.caption("hit_rate 列为空。")
+                        else:
+                            st.bar_chart(chart_df)
+                except Exception as exc:  # noqa: BLE001 — surface read errors
+                    st.caption(f"读取 {csv_rel} 失败: {exc}")
+            else:
+                st.caption(f"CSV 缺失: `{csv_rel}`")
+
+    st.divider()
+
+    # ---- per-request reuse-rank distribution ----
+    rr = s1.get("reuse_rank_distribution")
+    st.subheader("Per-request reuse-rank distribution")
+    if not rr:
+        st.caption("reuse_rank 未跑 — 跳过分布图。")
+    else:
+        stats = rr.get("stats") or {}
+        if stats:
+            cols = st.columns(5)
+            cols[0].metric("p50", f"{float(stats.get('p50', 0)):.0f}")
+            cols[1].metric("p80", f"{float(stats.get('p80', 0)):.0f}")
+            cols[2].metric("p95", f"{float(stats.get('p95', 0)):.0f}")
+            cols[3].metric("mean", f"{float(stats.get('mean', 0)):.1f}")
+            cols[4].metric("max", f"{float(stats.get('max', 0)):.0f}")
+
+        summary = rr.get("summary") or {}
+        if summary:
+            reuse_rate = summary.get("reuse_rate")
+            rate_str = (f"{float(reuse_rate):.2%}"
+                        if reuse_rate is not None else "—")
+            st.caption(
+                f"requests with any reuse: {summary.get('requests_with_any_reuse')} "
+                f"/ {summary.get('total_requests')}  ·  reuse rate: {rate_str}"
+            )
+
+        csv_rel = rr.get("csv_path")
+        if csv_rel:
+            csv_path = model_dir / csv_rel
+            if csv_path.is_file():
+                try:
+                    df = pd.read_csv(csv_path)
+                    col = "content_prefix_reuse_blocks"
+                    if col not in df.columns:
+                        st.caption(
+                            f"未找到 {col} 列；CSV 列名: {list(df.columns)}"
+                        )
+                    else:
+                        chart_df = histogram_frame(df[col])
+                        if chart_df.empty:
+                            st.caption(f"{col} 列为空。")
+                        else:
+                            st.bar_chart(chart_df)
+                except Exception as exc:  # noqa: BLE001
+                    st.caption(f"读取 {csv_rel} 失败: {exc}")
+            else:
+                st.caption(f"CSV 缺失: `{csv_rel}`")
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Prefix Cache Dashboard",
@@ -137,11 +305,10 @@ def main() -> None:
     _render_meta(report)
     st.divider()
 
-    _render_placeholder(
-        "1. 理想命中率 (Ideal Hit Rate)",
-        "Step 10 will wire: F4 大数字卡片 + block_size sweep 折线 + "
-        "user hit histogram + reuse_rank histogram。",
-    )
+    model_dir = DEFAULT_OUTPUTS_ROOT / selected
+    _render_section_1(model_dir, report)
+    st.divider()
+
     _render_placeholder(
         "2. 流量业务模式 (Traffic Pattern)",
         "Step 11 will wire: interval 分位 + volume timeseries + "

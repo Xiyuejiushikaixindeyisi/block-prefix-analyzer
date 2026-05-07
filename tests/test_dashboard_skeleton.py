@@ -95,3 +95,35 @@ def test_load_report_returns_none_on_corrupt_json(tmp_path: Path, dashboard):
     (outputs_root / "demo").mkdir(parents=True)
     (outputs_root / "demo" / "report.json").write_text("{not valid")
     assert dashboard.load_report(outputs_root, "demo") is None
+
+
+# ---------------------------------------------------------------------------
+# histogram_frame (Step 10 helper)
+# ---------------------------------------------------------------------------
+
+def test_histogram_frame_basic(dashboard):
+    import pandas as pd
+    s = pd.Series([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    df = dashboard.histogram_frame(s, bins=10)
+    assert df["count"].sum() == len(s)
+    assert len(df) == 10                     # 10 bins requested
+
+
+def test_histogram_frame_empty_input(dashboard):
+    import pandas as pd
+    df = dashboard.histogram_frame(pd.Series([], dtype=float))
+    assert df.empty
+
+
+def test_histogram_frame_constant_input_returns_single_bucket(dashboard):
+    import pandas as pd
+    df = dashboard.histogram_frame(pd.Series([0.42] * 50))
+    assert len(df) == 1
+    assert df["count"].iloc[0] == 50
+
+
+def test_histogram_frame_drops_non_numeric(dashboard):
+    import pandas as pd
+    s = pd.Series([0.1, "bad", 0.5, None, 0.9])
+    df = dashboard.histogram_frame(s, bins=4)
+    assert df["count"].sum() == 3            # only the 3 numeric values
