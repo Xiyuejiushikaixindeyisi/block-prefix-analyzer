@@ -12,7 +12,8 @@ Output JSONL fields (one JSON object per line)
 ----------------------------------------------
     user_id      – tenant / user identifier
     request_id   – "{chat_id}_{turn_index}"  (unique per turn)
-    timestamp    – arrival time (float, same unit as source)
+    timestamp    – window-relative offset in seconds (global min subtracted
+                   so the earliest record has timestamp == 0.0)
     raw_prompt   – prompt text
     chat_id      – original session identifier (for F9/F10 session analysis)
     turn_index   – 0-based position within session, ordered by timestamp
@@ -22,6 +23,15 @@ Session ordering rule
 Within each chat_id, turns are ordered by (timestamp, file_arrival_order).
 Duplicate timestamps within the same chat_id are broken by the row's position
 in the CSV (stable sort).
+
+Timestamp normalisation
+-----------------------
+After parsing, the global minimum timestamp across all rows is subtracted from
+every record's ``timestamp`` field. This makes the JSONL self-describing as a
+window-aligned trace: ``timestamp[earliest] == 0.0`` always holds. The
+operation is idempotent — if the source CSV already starts at 0.0, subtracting
+0.0 is a no-op. Relative differences (intervals, reuse times) are preserved
+exactly. This aligns with the project's future 30-min auto-sampling form.
 
 Usage
 -----
@@ -144,6 +154,17 @@ def convert(
     print(f"  {total_rows:,} rows read, {len(sessions):,} sessions found"
           + (f"  ({skipped} rows skipped)" if skipped else ""))
 
+    if total_rows == 0:
+        print("[WARN] No records to write; output file will be empty.", file=sys.stderr)
+        output_path.write_text("", encoding="utf-8")
+        return
+
+    # ---- Normalize timestamps to window-relative offset ----
+    # Subtract the global minimum so the earliest record sits at 0.0. Idempotent
+    # when the source already starts at 0.0. See module docstring for rationale.
+    min_t = min(t for turns in sessions.values() for (t, _, _, _) in turns)
+    print(f"[Normalize] min_timestamp = {min_t:.6f}; subtracting so window starts at 0.0")
+
     # ---- Pass 2: sort within sessions, assign turn_index, write JSONL ----
     print(f"[Pass 2] Sorting turns and writing {output_path} ...")
     written = 0
@@ -160,7 +181,7 @@ def convert(
                 record = {
                     "user_id":    user_id,
                     "request_id": f"{chat_id}_{turn_index}",
-                    "timestamp":  timestamp,
+                    "timestamp":  timestamp - min_t,
                     "raw_prompt": raw_prompt,
                     "chat_id":    chat_id,
                     "turn_index": turn_index,
