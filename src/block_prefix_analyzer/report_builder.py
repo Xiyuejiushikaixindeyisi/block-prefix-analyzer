@@ -76,6 +76,30 @@ def _percentile(sorted_values: list[float], p: float) -> float:
     return float(sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (k - lo))
 
 
+_BLOCK_SIZE_SOURCES: tuple[str, ...] = (
+    "traffic_pattern", "common_prefix", "e1b_skewness",
+    "reuse_rank", "f4_prefix", "reuse_distance",
+)
+
+
+def _scan_block_size(metas: dict[str, dict | None]) -> int | None:
+    """Find ``block_size`` in any metadata blob that carries it.
+
+    F4 and reuse_distance metadata historically don't write the field, so
+    we fall back through every other module that does. Returns ``None``
+    only when *all* sources are missing or unparsable — a real signal
+    that no analysis ran for this model.
+    """
+    for name in _BLOCK_SIZE_SOURCES:
+        m = metas.get(name)
+        if m and m.get("block_size") is not None:
+            try:
+                return int(m["block_size"])
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
 def _compute_data_version(input_file: Path | None) -> str | None:
     if input_file is None or not input_file.exists():
         return None
@@ -264,6 +288,7 @@ def _build_section_1_ideal_hit(
     e1_dir: Path,
     reuse_rank_meta: dict | None,
     reuse_rank_dir: Path,
+    block_size_fallback: int | None = None,
 ) -> dict | None:
     if f4_meta is None and e1_meta is None and reuse_rank_meta is None:
         return None
@@ -279,7 +304,7 @@ def _build_section_1_ideal_hit(
         f4_overall = {
             "ideal_hit_ratio": ratio,
             "hit_definition": f4_meta.get("hit_definition"),
-            "block_size": f4_meta.get("block_size"),
+            "block_size": f4_meta.get("block_size") or block_size_fallback,
             "series_csv": "f4_prefix/series.csv",
         }
 
@@ -482,11 +507,11 @@ def _build_meta(
     reuse_distance: dict | None,
     e1: dict | None,
     f10: dict | None,
+    block_size: int | None = None,
 ) -> dict:
     primary = f4 if f4 is not None else (
         reuse_distance if reuse_distance is not None else (traffic or {})
     )
-    block_size = primary.get("block_size") if primary else None
     trace_name = primary.get("trace_name", model_id)
 
     # Total requests: prefer reuse_distance (per-request) then traffic
@@ -560,6 +585,7 @@ def assemble_report(
     )}
 
     meta_blobs = {name: _load_json(d / "metadata.json") for name, d in sub.items()}
+    block_size = _scan_block_size(meta_blobs)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -578,6 +604,7 @@ def assemble_report(
             reuse_distance=meta_blobs["reuse_distance"],
             e1=meta_blobs["e1_user_hit_rate"],
             f10=meta_blobs["f10_agent"],
+            block_size=block_size,
         ),
         "section_1_ideal_hit": _build_section_1_ideal_hit(
             f4_meta=meta_blobs["f4_prefix"],
@@ -585,6 +612,7 @@ def assemble_report(
             e1_dir=sub["e1_user_hit_rate"],
             reuse_rank_meta=meta_blobs["reuse_rank"],
             reuse_rank_dir=sub["reuse_rank"],
+            block_size_fallback=block_size,
         ),
         "section_2_traffic": _build_section_2_traffic(
             traffic=meta_blobs["traffic_pattern"],

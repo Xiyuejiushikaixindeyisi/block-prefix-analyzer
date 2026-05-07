@@ -345,6 +345,35 @@ def test_only_traffic_pattern_present(tmp_path: Path):
     assert "session_structure" not in s2
 
 
+def test_block_size_falls_back_when_f4_metadata_lacks_field(tmp_path: Path):
+    """Real F4 metadata.json doesn't carry block_size; fallback through other
+    metadata sources keeps meta.block_size and f4_overall.block_size populated.
+    """
+    outputs_dir = tmp_path / "out"
+    # F4 fixture WITHOUT block_size — matches actual save_metadata_json output.
+    _write_json(outputs_dir / "f4_prefix" / "metadata.json", {
+        "trace_name": "demo",
+        "ideal_overall_hit_ratio": 0.55,
+        "hit_definition": "content_prefix_reuse_blocks",
+        # no block_size key
+    })
+    # traffic_pattern carries block_size — used as fallback.
+    _write_json(outputs_dir / "traffic_pattern" / "metadata.json", {
+        "trace_name": "demo",
+        "block_size": 128,
+        "bin_size_s": 60,
+        "working_set_windows_min": [60, 120],
+        "totals": {"total_requests": 100, "total_unique_blocks": 500,
+                    "duration_s": 3600.0, "first_timestamp_s": 0.0},
+        "interval_percentiles": {"p50": 0.5, "p75": 1.0, "p80": 1.5, "p95": 5.0},
+        "working_set": {"60": 500, "120": 500},
+    })
+
+    report = assemble_report("demo", outputs_dir)
+    assert report["meta"]["block_size"] == 128
+    assert report["section_1_ideal_hit"]["f4_overall"]["block_size"] == 128
+
+
 def test_only_f4_present_section1_partial(tmp_path: Path):
     outputs_dir = tmp_path / "out"
     _write_json(outputs_dir / "f4_prefix" / "metadata.json", {
