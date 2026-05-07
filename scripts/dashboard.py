@@ -67,8 +67,14 @@ def discover_reports(outputs_root: Path) -> list[str]:
     )
 
 
+@st.cache_data(show_spinner=False)
 def load_report(outputs_root: Path, model_id: str) -> dict[str, Any] | None:
-    """Load and return ``report.json`` for ``model_id``, or None on failure."""
+    """Load and return ``report.json`` for ``model_id``, or None on failure.
+
+    Cached for the lifetime of the Streamlit session — the report.json is
+    treated as immutable while a dashboard is open. Re-build_model_report
+    runs require a Streamlit "Clear cache" or process restart to pick up.
+    """
     path = outputs_root / model_id / "report.json"
     if not path.is_file():
         return None
@@ -117,6 +123,15 @@ def _render_sidebar(outputs_root: Path) -> str | None:
         return None
 
     selected = st.sidebar.selectbox("模型 (model_id)", models, index=0)
+
+    # Manual cache flush — needed after re-running build_model_report
+    # while the dashboard is open (cache is otherwise session-lifetime).
+    if st.sidebar.button("🔄 Reload data (clear cache)",
+                          help="重新读取 report.json + CSV — 重跑 "
+                               "build_model_report 后用",
+                          use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
     # Phase 2 placeholder — disabled.
     st.sidebar.divider()
@@ -298,8 +313,14 @@ def _render_section_1(model_dir: Path, report: dict[str, Any]) -> None:
                 st.caption(f"CSV 缺失: `{csv_rel}`")
 
 
+@st.cache_data(show_spinner=False)
 def _read_csv_safely(model_dir: Path, csv_rel: str | None) -> pd.DataFrame | None:
-    """Read a CSV under ``model_dir/csv_rel``; return None on missing/error."""
+    """Read a CSV under ``model_dir/csv_rel``; return None on missing/error.
+
+    Cached so that interactive reruns (sidebar selection, sliders) don't
+    hammer the disk for the same CSV repeatedly. The biggest dashboard
+    perf win — every chart in §§2–4 reads at least one CSV per render.
+    """
     if not csv_rel:
         return None
     path = model_dir / csv_rel
