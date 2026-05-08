@@ -59,7 +59,7 @@ from block_prefix_analyzer.reports.sections import (
 import json
 
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 DATA_VERSION_PREFIX_LEN = 16
 
 
@@ -164,6 +164,10 @@ def assemble_report(
         "scope": {
             "kind": "model",
             "model_id": model_id,
+            "app_id": None,
+            "product_name": None,
+            "declared_model": None,
+            "app_history": None,
             "user_id": None,
             "department_id": None,
             "department_name": None,
