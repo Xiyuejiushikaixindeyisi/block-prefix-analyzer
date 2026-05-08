@@ -15,6 +15,7 @@
 | [docs/two_queue_ttl_experiment_plan.md](./docs/two_queue_ttl_experiment_plan.md) | Two-Queue TTL 实验计划 v1.1（F13 锚定 TTL + registry） |
 | [docs/可视化.md](./docs/可视化.md) | Phase 1 Dashboard 实施计划 + 全部设计决策 |
 | [docs/dashboard_phase2_plan.md](./docs/dashboard_phase2_plan.md) | Dashboard Phase 2 — APP 级报告设计与实施计划 |
+| [docs/analysis_dimensions.md](./docs/analysis_dimensions.md) | 分析维度心智模型（4 维 × 2 层级）+ 端到端实验步骤命令行 |
 
 离线分析 LLM 请求 trace 中 **block 级前缀复用** 的工具。
 
