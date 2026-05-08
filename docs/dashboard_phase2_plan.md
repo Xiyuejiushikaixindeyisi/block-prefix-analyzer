@@ -247,14 +247,24 @@ build_app_registry.py 末尾打印：
 |---|---|---|
 | 该 APP 的 ideal prefix hit rate | F4 重算（在 user_id 过滤后的子集上） | per-app 主指标，**block_size = 128** |
 | 该 APP 的请求数 / block 总数 | 同上 | 规模上下文 |
-| 模型整体 ideal prefix hit rate | model 级 report.json（block_size = 128） | 对照基线 |
-| 模型内同 APP 的 ideal hit 中位 / p90 | **`e1_user_hit_rate/user_hit_bs128.csv`** 派生 | **同模型横向对照（锚定 bs=128）** |
-| 该 APP 的 block_size sweep 折线 | F4 sweep 重算（4 档 16/32/64/128） | 与模型级 sweep 对齐口径 |
+| 模型整体 ideal prefix hit rate | model 级 `f4_prefix/metadata.json`（block_size = 128） | 对照基线 |
+| 模型内同 APP 的 ideal hit 中位 / p80 / p90 | **`e1_user_hit_rate/user_hit_bs128.csv`** 派生 | **同模型横向对照（锚定 bs=128）** |
 
-> **横向对照口径锚定**：相对位置卡片与本节中位/p90 计算**统一使用 block_size = 128**
-> 的 `user_hit_bs128.csv`。dashboard 主图也是 128，避免 sweep 多档时的歧义。
-> 64K+ 模型若 sweep 仅有单档（128），则口径自动一致；8K–32K 模型存在 4 档时，
-> 其他 3 档（16/32/64）仅在该 APP 自己的 sweep 折线中展示，不参与横向对照。
+> **不做 4 档 sweep**：用户级报告**只在 deployment block_size**（典型 128）跑一次 F4 重算，
+> 不复用模型级的 4 档 sweep（16/32/64/128）。理由：
+> 1. 单 APP 的 block_size 决策由部署侧统一约束，per-APP 给 4 档曲线无信息增益；
+> 2. 单档比 4 档省 75% 计算量，per-APP 报告生成时间从几秒降到 1 秒级；
+> 3. 横向对照（中位/p80/p90）锚定 `user_hit_bs128.csv`，与 dashboard 主图口径自动一致。
+>
+> 实现层落到 `reports/app_compute.py`，以 `compute_app_f4` 单次调用完成；
+> `section_1_ideal_hit` JSON 形状：
+> ```jsonc
+> {
+>   "app_f4":     { ideal_hit_ratio, total_blocks_sum, hit_blocks_sum, total_requests, block_size, hit_definition },
+>   "model_baseline": { ideal_hit_ratio, block_size, total_blocks_sum, hit_blocks_sum, hit_definition } | null,
+>   "user_hit_distribution": { block_size_used, csv_path, stats: { p50, p80, p90, max, user_count } } | null
+> }
+> ```
 
 ### 5.2 Section B：流量节奏
 

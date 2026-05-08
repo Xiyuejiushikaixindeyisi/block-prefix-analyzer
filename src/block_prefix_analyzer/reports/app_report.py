@@ -44,6 +44,8 @@ from block_prefix_analyzer.report_builder import (
     SCHEMA_VERSION,
     compute_data_version,
 )
+from block_prefix_analyzer.reports.app_compute import build_app_section_1
+from block_prefix_analyzer.reports.app_filter import FilterStats
 from block_prefix_analyzer.reports.app_registry import AppRegistryEntry
 from block_prefix_analyzer.reports.sections import (
     discover_block_size,
@@ -51,6 +53,7 @@ from block_prefix_analyzer.reports.sections import (
 )
 
 UNREGISTERED_PRODUCT_NAME = "<unregistered>"
+DEFAULT_BLOCK_SIZE_FALLBACK = 128
 
 
 def _entry_to_history_dict(entry: AppRegistryEntry) -> dict:
@@ -100,26 +103,43 @@ def _build_scope(
     }
 
 
+def _filter_stats_to_dict(stats: FilterStats) -> dict:
+    return {
+        "total_lines": stats.total_lines,
+        "kept_count": stats.kept_count,
+        "malformed_count": stats.malformed_count,
+        "missing_user_id_count": stats.missing_user_id_count,
+    }
+
+
 def _build_meta(
     model_id: str,
     app_id: str,
     block_size: int | None,
     input_file: Path | None,
+    filter_stats: FilterStats | None = None,
 ) -> dict:
-    """Skeleton meta for an APP report.
+    """Meta block for an APP report.
 
-    ``total_requests`` and ``time_range`` are intentionally ``None`` here;
-    Step 4b (after running F4 on the filtered subset) and Step 4c
-    (per-APP traffic timeseries) overwrite them with real values.
+    ``total_requests`` is filled from ``filter_stats.kept_count`` when the
+    caller has run :func:`reports.app_filter.write_filtered_jsonl`. The
+    ``time_range`` field is left as ``None`` by Step 4b and is filled by
+    Step 4c (per-APP traffic timeseries).
     """
+    total_requests: int | None = None
+    app_filter_stats: dict | None = None
+    if filter_stats is not None:
+        total_requests = filter_stats.kept_count
+        app_filter_stats = _filter_stats_to_dict(filter_stats)
     return {
         "trace_name": f"{model_id}/{app_id}",
         "model_id": model_id,
         "app_id": app_id,
         "input_file": str(input_file) if input_file else None,
         "block_size": block_size,
-        "total_requests": None,
+        "total_requests": total_requests,
         "time_range": None,
+        "app_filter_stats": app_filter_stats,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "data_version": compute_data_version(input_file),
     }
@@ -130,9 +150,12 @@ def assemble_app_report(
     app_id: str,
     outputs_dir: Path,
     history: list[AppRegistryEntry],
+    *,
+    filtered_jsonl: Path | None = None,
+    filter_stats: FilterStats | None = None,
     input_file: Path | None = None,
 ) -> dict:
-    """Build a v1.2 APP-level report dict (skeleton, sections empty).
+    """Build a v1.2 APP-level report dict.
 
     Parameters
     ----------
@@ -143,24 +166,48 @@ def assemble_app_report(
         the production logs (see plan §2.2).
     outputs_dir:
         Path to ``outputs/maas/<model_id>/``. Used to discover the
-        deployment's ``block_size`` for the meta block.
+        deployment's ``block_size`` and to read the model-level F4 / e1
+        baselines.
     history:
         List of historical registry entries for this APP, sorted by
         meeting date ascending (e.g. ``registry.get_history(app_id)``).
         An empty list triggers the §3.3 unregistered fallback.
+    filtered_jsonl:
+        Optional path to a per-APP filtered JSONL produced by
+        :func:`reports.app_filter.write_filtered_jsonl`. When provided,
+        Step 4b populates ``section_1_ideal_hit`` by re-running F4 on
+        this subset. When omitted, ``section_1_ideal_hit`` is left as
+        ``None`` (skeleton mode for Step 4a tests).
+    filter_stats:
+        Optional :class:`FilterStats` returned by ``write_filtered_jsonl``.
+        When provided, fills ``meta.total_requests`` and
+        ``meta.app_filter_stats`` for diagnostics.
     input_file:
-        Optional path to the source ``requests.jsonl`` used for the
-        ``data_version`` SHA-256 and the meta ``input_file`` field.
+        Optional path to the source ``requests.jsonl`` (pre-filter) used
+        for the ``data_version`` SHA-256 and the meta ``input_file`` field.
+
+    Sections 2 / 3 / 4 are filled by Steps 4c / 4d / 4e respectively and
+    remain ``None`` here.
     """
     outputs_dir = Path(outputs_dir)
     meta_blobs = load_metadata_blobs(outputs_dir)
     block_size = discover_block_size(meta_blobs)
 
+    section_1: dict | None = None
+    if filtered_jsonl is not None:
+        effective_block_size = block_size or DEFAULT_BLOCK_SIZE_FALLBACK
+        section_1 = build_app_section_1(
+            filtered_jsonl=filtered_jsonl,
+            block_size=effective_block_size,
+            f4_metadata_path=outputs_dir / "f4_prefix" / "metadata.json",
+            e1_dir=outputs_dir / "e1_user_hit_rate",
+        )
+
     return {
         "schema_version": SCHEMA_VERSION,
         "scope": _build_scope(model_id, app_id, history),
-        "meta": _build_meta(model_id, app_id, block_size, input_file),
-        "section_1_ideal_hit": None,
+        "meta": _build_meta(model_id, app_id, block_size, input_file, filter_stats),
+        "section_1_ideal_hit": section_1,
         "section_2_traffic": None,
         "section_3_locality": None,
         "section_4_content": None,

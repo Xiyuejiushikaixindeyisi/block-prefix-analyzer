@@ -86,10 +86,13 @@ def f13_cdf_percentiles(cdf_csv: Path) -> dict[str, float] | None:
 
 
 def user_hit_distribution(csv_path: Path) -> dict[str, float] | None:
-    """Aggregate per-user hit-rate column into p50 / p80 / max / count.
+    """Aggregate per-user hit-rate column into p50 / p80 / p90 / max / count.
 
     Accepts any of ``hit_rate`` / ``ideal_hit_rate`` / ``prefix_hit_rate``
-    as the per-row value column (first match wins).
+    as the per-row value column (first match wins). The ``p90`` field is
+    consumed by the APP-level cross-app baseline (plan §5.1 anchors the
+    horizontal comparison to median + p90); model report keeps using
+    ``p50`` / ``p80`` and ignores the extra key.
     """
     if not csv_path.exists():
         return None
@@ -110,6 +113,7 @@ def user_hit_distribution(csv_path: Path) -> dict[str, float] | None:
     return {
         "p50": percentile(hit_rates, 50),
         "p80": percentile(hit_rates, 80),
+        "p90": percentile(hit_rates, 90),
         "max": float(hit_rates[-1]),
         "user_count": len(hit_rates),
     }

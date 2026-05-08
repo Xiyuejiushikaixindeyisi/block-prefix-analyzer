@@ -7,10 +7,12 @@ and meta block sanity.
 """
 from __future__ import annotations
 
+import csv as _csv
 import json
 from pathlib import Path
 
 from block_prefix_analyzer.report_builder import SCHEMA_VERSION
+from block_prefix_analyzer.reports.app_filter import FilterStats
 from block_prefix_analyzer.reports.app_registry import AppRegistryEntry
 from block_prefix_analyzer.reports.app_report import (
     UNREGISTERED_PRODUCT_NAME,
@@ -256,9 +258,135 @@ def test_meta_data_version_from_input_file(tmp_path: Path) -> None:
 
 
 def test_meta_skeleton_leaves_per_app_totals_for_step_4b_and_4c(tmp_path: Path) -> None:
-    """Step 4a does not yet have access to filtered F4 / traffic results."""
+    """No filter_stats supplied -> totals stay None (skeleton path)."""
     meta = assemble_app_report(
         model_id="m", app_id="com.x", outputs_dir=tmp_path, history=[_entry()]
     )["meta"]
     assert meta["total_requests"] is None
     assert meta["time_range"] is None
+    assert meta["app_filter_stats"] is None
+
+
+# ---------------------------------------------------------------------------
+# Step 4b — section_1 + filter_stats wiring
+# ---------------------------------------------------------------------------
+
+def _write_business_jsonl(tmp_path: Path, rows: list[dict], name: str = "filtered.jsonl") -> Path:
+    p = tmp_path / name
+    p.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return p
+
+
+def _write_csv_rows(path: Path, header: list[str], rows: list[list]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as f:
+        w = _csv.writer(f)
+        w.writerow(header)
+        for r in rows:
+            w.writerow(r)
+
+
+def test_section_1_remains_none_without_filtered_jsonl(tmp_path: Path) -> None:
+    """Skeleton path (Step 4a) — section_1 stays None until 4b is invoked."""
+    report = assemble_app_report(
+        model_id="m", app_id="com.x", outputs_dir=tmp_path, history=[_entry()],
+    )
+    assert report["section_1_ideal_hit"] is None
+
+
+def test_section_1_populated_when_filtered_jsonl_provided(tmp_path: Path) -> None:
+    outputs_dir = tmp_path / "outputs"
+    # Synthetic model-level F4 metadata + e1 csv at bs=16.
+    _write_meta(outputs_dir / "f4_prefix" / "metadata.json", {
+        "ideal_overall_hit_ratio": 0.62,
+        "block_size": 16,
+        "total_blocks_sum": 200,
+        "hit_blocks_sum": 124,
+    })
+    _write_meta(outputs_dir / "traffic_pattern" / "metadata.json", {"block_size": 16})
+    _write_csv_rows(
+        outputs_dir / "e1_user_hit_rate" / "user_hit_bs16.csv",
+        ["user_id", "hit_rate"],
+        [["com.x", 0.5], ["com.y", 0.7], ["com.z", 0.9]],
+    )
+
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0, "raw_prompt": "abc" * 50},
+        {"user_id": "com.x", "request_id": "r2", "timestamp": 1.0, "raw_prompt": "abc" * 50},
+    ])
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x")],
+        filtered_jsonl=filtered,
+    )
+    section = report["section_1_ideal_hit"]
+    assert section is not None
+    assert section["app_f4"]["total_blocks_sum"] == 18  # 9 + 9
+    assert section["app_f4"]["hit_blocks_sum"] == 9
+    assert section["app_f4"]["block_size"] == 16
+    assert section["model_baseline"]["ideal_hit_ratio"] == 0.62
+    assert section["user_hit_distribution"]["block_size_used"] == 16
+    assert section["user_hit_distribution"]["stats"]["user_count"] == 3
+
+
+def test_section_1_block_size_falls_back_to_128_when_discovery_fails(tmp_path: Path) -> None:
+    """If outputs_dir is empty, block_size discovery returns None and we
+    fall back to 128 so that compute_app_f4 still has a sensible default."""
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0, "raw_prompt": "x" * 256},
+        {"user_id": "com.x", "request_id": "r2", "timestamp": 1.0, "raw_prompt": "x" * 256},
+    ])
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x")],
+        filtered_jsonl=filtered,
+    )
+    section = report["section_1_ideal_hit"]
+    assert section is not None
+    assert section["app_f4"]["block_size"] == 128
+
+
+def test_filter_stats_populates_meta_total_requests(tmp_path: Path) -> None:
+    stats = FilterStats(
+        total_lines=10, kept_count=4, malformed_count=1, missing_user_id_count=2,
+    )
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=tmp_path,
+        history=[_entry()],
+        filter_stats=stats,
+    )
+    meta = report["meta"]
+    assert meta["total_requests"] == 4
+    assert meta["app_filter_stats"] == {
+        "total_lines": 10,
+        "kept_count": 4,
+        "malformed_count": 1,
+        "missing_user_id_count": 2,
+    }
+
+
+def test_section_1_app_f4_none_when_filtered_jsonl_empty(tmp_path: Path) -> None:
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    filtered = tmp_path / "empty.jsonl"
+    filtered.write_text("", encoding="utf-8")
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry()],
+        filtered_jsonl=filtered,
+    )
+    section = report["section_1_ideal_hit"]
+    assert section is not None
+    assert section["app_f4"] is None
+    assert section["model_baseline"] is None
+    assert section["user_hit_distribution"] is None
