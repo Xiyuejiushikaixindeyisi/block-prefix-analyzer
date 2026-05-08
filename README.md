@@ -1145,17 +1145,34 @@ APP 报告读 `outputs/maas/<MODEL>/{f4_prefix,f13_prefix,common_prefix,e1_user_
 DATA_ROOT=/data/internal scripts/run_dashboard_pipeline.sh <MODEL>
 ```
 
-### 一次性：从月度会议 csv 生成 APP 注册表
+### 一次性：从月度会议 xlsx 生成 APP 注册表
 
-每月新会议 csv 到位后跑一次：
+业务侧月度会议导出通常是 .xlsx；`build_app_registry.py` 只读 .csv，所以**先把 xlsx 转 csv**再跑注册表生成。openpyxl 不在项目核心依赖里，需要一次性安装：
 
 ```bash
+pip install openpyxl
+```
+
+每月新会议 xlsx 到位后跑这两步：
+
+```bash
+# (1) xlsx → csv（dtype=str 保留 "NA" 等字符串，禁止 pandas 把它转 NaN）
+python -c "
+import pandas as pd
+pd.read_excel('data/internal/meetings/<YYYY-MM>.xlsx', dtype=str).to_csv(
+    'data/internal/meetings/<YYYY-MM>.csv', index=False, encoding='utf-8'
+)"
+# 多 sheet 时加 sheet_name='<名字>' 显式指定（默认读第一个 sheet）
+
+# (2) csv → registry
 python scripts/build_app_registry.py \
     --csv data/internal/meetings/<YYYY-MM>.csv \
     --output configs/app_registry.csv
 ```
 
 注册表过滤规则（plan §2.1，硬编码）：`评审结论=同意` ∧ `资源使用方式=共享模型（API调用）` ∧ `任务类型=推理`。同一 `app_id` 多次申请**全部保留**（plan §3.1），一行 = 一次申请记录。脚本末尾打印 §3.4 数据完整性检查（注册表 vs 各模型日志 user_id 集合），缺失率 > 30% 时告警。
+
+> **隐私提示**：`configs/app_registry.csv` 含产品经理姓名 / 业务用途等敏感信息。`configs/` 目录默认 git 跟踪——如果不希望此文件入 origin，把 `configs/app_registry.csv` 加进 `.gitignore`。
 
 ### 按需：单个 APP 的报告
 
