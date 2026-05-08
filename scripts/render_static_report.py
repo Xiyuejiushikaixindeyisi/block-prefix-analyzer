@@ -504,6 +504,394 @@ def _section_5(report: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# APP-level renderers (Dashboard Phase 2 — kind="app")
+# ---------------------------------------------------------------------------
+
+UNREGISTERED_PRODUCT_NAME = "<unregistered>"
+PEAK_ALIGNMENT_LABEL_LABELS = {"high": "🟢 高", "medium": "🟡 中", "low": "⚪ 低"}
+
+
+def _app_header(scope: dict, meta: dict) -> str:
+    product_name = scope.get("product_name") or "—"
+    app_id = scope.get("app_id") or "—"
+    model_id = scope.get("model_id") or "—"
+    declared = scope.get("declared_model") or "—"
+    title = (
+        f"{html.escape(str(product_name))} "
+        f"<code style='font-size:0.65em;color:#6b7280'>{html.escape(str(app_id))}</code>"
+    )
+    subtitle = (
+        f"Deployment <b>{html.escape(str(model_id))}</b>"
+        f" · Declared model <b>{html.escape(str(declared))}</b>"
+    )
+    time_range = meta.get("time_range") or {}
+    header_meta = (
+        f"requests: <b>{_fmt_num(meta.get('total_requests'))}</b> · "
+        f"block_size: <b>{_escape(meta.get('block_size'))}</b> · "
+        f"window: <b>{_escape(time_range.get('duration_h'))} h</b> · "
+        f"generated_at: <code>{_escape(meta.get('generated_at'))}</code> · "
+        f"data_version: <code>{_escape(meta.get('data_version'))}</code>"
+    )
+    return (
+        f"<header><h1>{title} — APP Prefix Cache Report</h1>"
+        f"<div class='subtitle'>{subtitle}</div>"
+        f"<div class='meta'>{header_meta}</div></header>"
+    )
+
+
+def _app_warning_banner(scope: dict) -> str:
+    if scope.get("product_name") != UNREGISTERED_PRODUCT_NAME:
+        return ""
+    return (
+        "<div class='warning' style='margin:0.8rem 0'>"
+        "⚠️ 此 APP ID 未在最新会议申请记录中找到。"
+        "可能为未审批 / 历史遗留 APP / 测试流量。"
+        "</div>"
+    )
+
+
+def _app_relative_position(rp: dict | None) -> str:
+    if rp is None:
+        return ""
+    out = ["<section><h2>0. 相对位置 (Relative Position)</h2>"]
+
+    rv = rp.get("request_volume")
+    hr = rp.get("hit_rate")
+    cp = rp.get("consensus_prefix_length")
+    pa = rp.get("peak_alignment")
+    dmc = rp.get("declared_model_consistency")
+
+    items: list[tuple[str, str]] = []
+    if rv:
+        top_pct = rv.get("top_pct")
+        items.append((
+            "请求量分位",
+            f"top {_fmt_num(top_pct, ',.1f')}% "
+            f"<span class='hint'>({_fmt_num(rv.get('this_app_request_count'))} reqs"
+            f" / {_fmt_num(rv.get('model_user_count'))} apps)</span>",
+        ))
+    if hr:
+        delta_pp = hr.get("delta_pp")
+        sign = "+" if (delta_pp or 0) >= 0 else ""
+        items.append((
+            "命中率 vs 模型中位",
+            f"{_fmt_pct(hr.get('this_app'))} "
+            f"<span class='hint'>(median {_fmt_pct(hr.get('model_median'))}; "
+            f"Δ {sign}{_fmt_num(delta_pp, ',.2f')} pp)</span>",
+        ))
+    if cp:
+        items.append((
+            "共识 prefix 长度",
+            f"{_fmt_num(cp.get('this_app_blocks'))} blocks "
+            f"<span class='hint'>(model: {_fmt_num(cp.get('model_blocks'))} blocks; "
+            f"{_fmt_num(cp.get('this_app_chars'))} / "
+            f"{_fmt_num(cp.get('model_chars'))} chars)</span>",
+        ))
+    if pa:
+        label = pa.get("label")
+        label_disp = PEAK_ALIGNMENT_LABEL_LABELS.get(label, _escape(label))
+        items.append((
+            "高峰对齐 (路由价值)",
+            f"{label_disp} "
+            f"<span class='hint'>(ratio {_fmt_num(pa.get('ratio'), ',.3f')})</span>",
+        ))
+    if dmc:
+        ok = dmc.get("is_consistent")
+        flag = "✓ 一致" if ok else "⚠ 不一致"
+        items.append((
+            "申报模型一致性",
+            f"{flag} "
+            f"<span class='hint'>matched: "
+            f"{html.escape(', '.join(dmc.get('matched_declared_models') or [])) or '—'}</span>",
+        ))
+    if items:
+        out.append(_metric_strip(items))
+    else:
+        out.append("<p class='muted'>无可派生的相对位置信息（前置 sections 为空）。</p>")
+    out.append("</section>")
+    return "\n".join(out)
+
+
+def _app_history_table(scope: dict) -> str:
+    history = scope.get("app_history") or []
+    if not history:
+        return ""
+    out = ["<section><h2>申请历史 (App History)</h2>"]
+    out.append(
+        "<table class='consensus'><thead><tr>"
+        "<th>meeting date</th><th>declared model</th><th>business</th>"
+        "<th>PM</th><th>resource (req → actual)</th>"
+        "<th>quota / concurrency</th><th>duration</th>"
+        "</tr></thead><tbody>"
+    )
+    for e in history:
+        out.append(
+            "<tr>"
+            f"<td>{_escape(e.get('source_meeting_date'))}</td>"
+            f"<td><code>{_escape(e.get('declared_model'))}</code></td>"
+            f"<td>{_escape(e.get('business_purpose'))}</td>"
+            f"<td>{_escape(e.get('product_manager'))}</td>"
+            f"<td>{_escape(e.get('resource_type_requested'))} → "
+            f"{_escape(e.get('resource_type_actual'))}</td>"
+            f"<td>{_escape(e.get('guaranteed_quota_cards'))} cards / "
+            f"{_escape(e.get('guaranteed_concurrency'))}</td>"
+            f"<td>{_escape(e.get('expected_duration'))}</td>"
+            "</tr>"
+        )
+    out.append("</tbody></table></section>")
+    return "\n".join(out)
+
+
+def _app_section_1(report: dict) -> str:
+    s1 = report.get("section_1_ideal_hit") or {}
+    if not s1:
+        return ("<section><h2>A. 命中率画像 (Ideal Hit Rate)</h2>"
+                "<p class='muted'>未生成 — 该 APP 子集为空或前置数据缺失。</p></section>")
+    out = ["<section><h2>A. 命中率画像 (Ideal Hit Rate)</h2>"]
+
+    app_f4 = s1.get("app_f4") or {}
+    if app_f4:
+        out.append("<h3>该 APP</h3>")
+        out.append(_metric_strip([
+            ("Ideal hit ratio", _fmt_pct(app_f4.get("ideal_hit_ratio"))),
+            ("Total blocks", _fmt_num(app_f4.get("total_blocks_sum"))),
+            ("Hit blocks", _fmt_num(app_f4.get("hit_blocks_sum"))),
+            ("Requests", _fmt_num(app_f4.get("total_requests"))),
+            ("block_size", _escape(app_f4.get("block_size"))),
+        ]))
+    else:
+        out.append("<p class='muted'>该 APP 在过滤后无可计算的 F4 结果。</p>")
+
+    base = s1.get("model_baseline") or {}
+    if base:
+        out.append("<h3>模型基线</h3>")
+        out.append(_metric_strip([
+            ("Model hit ratio", _fmt_pct(base.get("ideal_hit_ratio"))),
+            ("Model total blocks", _fmt_num(base.get("total_blocks_sum"))),
+            ("Model hit blocks", _fmt_num(base.get("hit_blocks_sum"))),
+            ("Model block_size", _escape(base.get("block_size"))),
+        ]))
+
+    uhd = s1.get("user_hit_distribution") or {}
+    stats = uhd.get("stats") or {}
+    if stats:
+        out.append(f"<h3>同模型 APP 命中率分布 (block_size={_escape(uhd.get('block_size_used'))})</h3>")
+        out.append(_metric_strip([
+            ("p50", _fmt_pct(stats.get("p50"))),
+            ("p80", _fmt_pct(stats.get("p80"))),
+            ("p90", _fmt_pct(stats.get("p90"))),
+            ("max", _fmt_pct(stats.get("max"))),
+            ("Apps", _escape(stats.get("user_count"))),
+        ]))
+    out.append("</section>")
+    return "\n".join(out)
+
+
+def _generate_app_volume_chart(volume_series: list, bin_size_s: int) -> str | None:
+    """Inline matplotlib chart for the per-APP volume series."""
+    if not volume_series:
+        return None
+    xs = [pt[0] / 60 for pt in volume_series]   # minutes since trace start
+    ys = [pt[1] for pt in volume_series]
+    fig, ax = plt.subplots(figsize=(8, 2.6))
+    ax.plot(xs, ys, lw=1.2, color="#2563eb", marker="o", markersize=3)
+    ax.set_xlabel("time (min, since trace start)")
+    ax.set_ylabel("requests / bin")
+    ax.set_title(f"Per-APP request volume (bin = {bin_size_s}s)")
+    ax.grid(True, alpha=0.3)
+    return _fig_to_data_uri(fig)
+
+
+def _app_section_2(report: dict) -> str:
+    s2 = report.get("section_2_traffic") or {}
+    if not s2:
+        return ("<section><h2>B. 流量节奏 (Traffic Cadence)</h2>"
+                "<p class='muted'>未生成 — 该 APP 子集为空或前置数据缺失。</p></section>")
+    out = ["<section><h2>B. 流量节奏 (Traffic Cadence)</h2>"]
+
+    at = s2.get("app_traffic") or {}
+    if at:
+        ip = at.get("interval_percentiles") or {}
+        out.append("<h3>请求间隔分位数（秒）</h3>")
+        out.append(_metric_strip([
+            ("p50", _fmt_num(ip.get("p50"), ",.3f")),
+            ("p75", _fmt_num(ip.get("p75"), ",.3f")),
+            ("p80", _fmt_num(ip.get("p80"), ",.3f")),
+            ("p95", _fmt_num(ip.get("p95"), ",.3f")),
+        ]))
+        out.append("<h3>该 APP 请求时序</h3>")
+        chart_uri = _generate_app_volume_chart(
+            at.get("volume_series") or [], at.get("bin_size_s") or 60,
+        )
+        out.append(_img(chart_uri, "app volume timeseries"))
+
+    pa = s2.get("peak_alignment") or {}
+    if pa:
+        out.append("<h3>与模型高峰时段对齐</h3>")
+        out.append(_metric_strip([
+            ("Alignment ratio",
+             _fmt_pct(pa.get("peak_alignment_ratio"))),
+            ("Model bins ≥ p90",
+             f"{_fmt_num(pa.get('model_peak_bins'))} / "
+             f"{_fmt_num(pa.get('model_total_bins'))}"),
+            ("Model p90 (req / bin)",
+             _fmt_num(pa.get("model_volume_p90"), ",.2f")),
+            ("APP requests in peak",
+             f"{_fmt_num(pa.get('app_requests_in_peak_bins'))} / "
+             f"{_fmt_num(pa.get('app_total_requests'))}"),
+        ]))
+    else:
+        out.append("<p class='muted'>未计算高峰对齐 — 模型 traffic_pattern 数据缺失。</p>")
+    out.append("</section>")
+    return "\n".join(out)
+
+
+def _app_section_3(report: dict) -> str:
+    s3 = report.get("section_3_locality") or {}
+    if not s3:
+        return ("<section><h2>C. 时间局部性 (Locality)</h2>"
+                "<p class='muted'>未生成 — 该 APP 子集为空或前置数据缺失。</p></section>")
+    out = ["<section><h2>C. 时间局部性 (Locality)</h2>"]
+
+    f13 = s3.get("app_f13") or {}
+    if f13:
+        out.append("<h3>该 APP — F13 reuse-time</h3>")
+        out.append(_metric_strip([
+            ("Single-turn requests",
+             _fmt_num(f13.get("single_turn_request_count"))),
+            ("Reuse events", _fmt_num(f13.get("reuse_event_count"))),
+            ("block_size", _escape(f13.get("block_size"))),
+        ]))
+        stats = f13.get("stats_seconds")
+        if stats:
+            out.append(_metric_strip([
+                ("p50 (s)", _fmt_num(stats.get("p50"), ",.2f")),
+                ("p75 (s)", _fmt_num(stats.get("p75"), ",.2f")),
+                ("p80 (s)", _fmt_num(stats.get("p80"), ",.2f")),
+                ("p95 (s)", _fmt_num(stats.get("p95"), ",.2f")),
+            ]))
+        else:
+            out.append("<p class='muted'>该 APP 在过滤后无 reuse 事件，分位数不适用。</p>")
+
+    base = s3.get("model_baseline") or {}
+    if base:
+        out.append("<h3>模型基线 — F13 reuse-time</h3>")
+        out.append(_metric_strip([
+            ("Model single-turn requests",
+             _fmt_num(base.get("single_turn_request_count"))),
+        ]))
+        bstats = base.get("stats_seconds")
+        if bstats:
+            out.append(_metric_strip([
+                ("p50 (s)", _fmt_num(bstats.get("p50"), ",.2f")),
+                ("p75 (s)", _fmt_num(bstats.get("p75"), ",.2f")),
+                ("p80 (s)", _fmt_num(bstats.get("p80"), ",.2f")),
+                ("p95 (s)", _fmt_num(bstats.get("p95"), ",.2f")),
+            ]))
+    out.append("</section>")
+    return "\n".join(out)
+
+
+def _app_section_4(report: dict) -> str:
+    s4 = report.get("section_4_content") or {}
+    if not s4:
+        return ("<section><h2>D. System Prompt 共识 (Consensus Prefix)</h2>"
+                "<p class='muted'>未生成 — 该 APP 子集为空或前置数据缺失。</p></section>")
+    out = ["<section><h2>D. System Prompt 共识 (Consensus Prefix)</h2>"]
+
+    ac = s4.get("app_consensus") or {}
+    if ac:
+        out.append(_metric_strip([
+            ("Prefix length",
+             f"{_fmt_num(ac.get('prefix_length_blocks'))} blocks"),
+            ("Prefix chars", _fmt_num(ac.get("prefix_length_chars"))),
+            ("min_count", _escape(ac.get("min_count_threshold"))),
+            ("Total records", _fmt_num(ac.get("total_records"))),
+        ]))
+        blocks = ac.get("consensus_blocks") or []
+        if blocks:
+            out.append(f"<h3>Top {len(blocks)} consensus blocks</h3>")
+            rows = []
+            for b in blocks:
+                ctype = b.get("content_type_guess") or "other"
+                emoji = CONTENT_TYPE_EMOJI.get(ctype, "·")
+                preview = (b.get("text_preview") or "").replace("\n", " ")
+                if len(preview) > 200:
+                    preview = preview[:200] + "…"
+                rows.append(
+                    "<tr>"
+                    f"<td>{_escape(b.get('rank'))}</td>"
+                    f"<td>{_escape(b.get('position'))}</td>"
+                    f"<td>{_fmt_num(b.get('count'))}</td>"
+                    f"<td>{_fmt_num(b.get('coverage_pct'), ',.2f')}%</td>"
+                    f"<td>{emoji} {_escape(ctype)}</td>"
+                    f"<td><code>{_escape(preview)}</code></td>"
+                    "</tr>"
+                )
+            out.append(
+                "<table class='consensus'><thead><tr>"
+                "<th>rank</th><th>position</th><th>count</th><th>coverage</th>"
+                "<th>type</th><th>text_preview</th></tr></thead><tbody>"
+                + "\n".join(rows)
+                + "</tbody></table>"
+            )
+        preview = ac.get("decoded_text_preview") or ""
+        if preview:
+            out.append("<h3>Decoded prefix text (前 500 字符)</h3>")
+            out.append(f"<pre class='preview'>{_escape(preview)}</pre>")
+    else:
+        out.append("<p class='muted'>该 APP 在过滤后无共识 prefix（min_count=2 下零位置共享）。</p>")
+
+    overlap = s4.get("model_overlap") or {}
+    if overlap:
+        out.append("<h3>与模型 common_prefix 重叠</h3>")
+        out.append(_metric_strip([
+            ("APP unique blocks", _fmt_num(overlap.get("app_unique_block_count"))),
+            ("Model unique blocks",
+             _fmt_num(overlap.get("model_unique_block_count"))),
+            ("Shared", _fmt_num(overlap.get("shared_block_count"))),
+            ("APP overlap ratio",
+             _fmt_pct(overlap.get("overlap_ratio_app"))),
+            ("Model overlap ratio",
+             _fmt_pct(overlap.get("overlap_ratio_model"))),
+        ]))
+    out.append("</section>")
+    return "\n".join(out)
+
+
+def _render_app_html(report: dict) -> str:
+    scope = report.get("scope") or {}
+    meta = report.get("meta") or {}
+    rendered_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    title_text = (
+        f"{scope.get('product_name') or '—'} ({scope.get('app_id') or '—'})"
+    )
+    return (
+        "<!DOCTYPE html>\n"
+        "<html lang='zh-Hans'>\n"
+        "<head>\n"
+        f"<meta charset='utf-8'><title>{_escape(title_text)} — APP Report</title>\n"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>\n"
+        f"<style>{_CSS}</style>\n"
+        "</head>\n"
+        "<body>\n"
+        + _app_header(scope, meta) + "\n"
+        + _app_warning_banner(scope) + "\n"
+        + _app_relative_position(report.get("relative_position")) + "\n"
+        + _app_section_1(report) + "\n"
+        + _app_section_2(report) + "\n"
+        + _app_section_3(report) + "\n"
+        + _app_section_4(report) + "\n"
+        + _app_history_table(scope) + "\n"
+        + "<footer>静态报告由 <code>scripts/render_static_report.py</code> 生成 "
+        f"· kind: <b>app</b> · rendered_at: <code>{_escape(rendered_at)}</code> "
+        f"· schema: {_escape(report.get('schema_version'))}</footer>\n"
+        "</body></html>\n"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Page assembly
 # ---------------------------------------------------------------------------
 
@@ -519,6 +907,7 @@ h2 { font-size: 1.25rem; margin: 2rem 0 0.6rem; padding-bottom: 0.3rem;
 h3 { font-size: 1.05rem; margin: 1.4rem 0 0.4rem; color: #1f2937; }
 h4 { font-size: 0.95rem; margin: 1rem 0 0.3rem; color: #374151; }
 header .meta { color: #6b7280; font-size: 0.88rem; }
+header .subtitle { color: #374151; font-size: 0.95rem; margin: 0.1rem 0 0.4rem; }
 .metric-strip { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0.6rem 0; }
 .metric { background: #fff; border: 1px solid #e5e7eb; border-radius: 6px;
           padding: 0.55rem 0.9rem; min-width: 120px; flex: 1 1 120px; }
@@ -560,9 +949,8 @@ footer { color: #9ca3af; font-size: 0.78rem; text-align: center; margin: 2rem 0;
 """
 
 
-def _render_html(model_id: str, model_dir: Path, report: dict) -> str:
+def _render_model_html(model_id: str, model_dir: Path, report: dict) -> str:
     meta = report.get("meta") or {}
-    scope = report.get("scope") or {}
     time_range = meta.get("time_range") or {}
 
     header_meta = (
@@ -602,19 +990,38 @@ def _render_html(model_id: str, model_dir: Path, report: dict) -> str:
     )
 
 
-def render_one(outputs_root: Path, model_id: str) -> Path:
-    model_dir = outputs_root / model_id
-    report_path = model_dir / "report.json"
+def _render_html(scope_dir: Path, report: dict) -> str:
+    """Dispatch on ``scope.kind``. Model reports keep using the existing
+    layout; APP reports route to :func:`_render_app_html`."""
+    scope = report.get("scope") or {}
+    kind = scope.get("kind", "model")
+    if kind == "app":
+        return _render_app_html(report)
+    model_id = scope.get("model_id") or scope_dir.name
+    return _render_model_html(model_id, scope_dir, report)
+
+
+def render_report(report_path: Path) -> Path:
+    """Render any report.json (model or app) into report.html in the same dir.
+
+    Used by both ``render_one`` (model wrapper) and Step 6's
+    ``build_app_report.py`` CLI.
+    """
     if not report_path.is_file():
         raise FileNotFoundError(
-            f"report.json not found for {model_id}: {report_path}. "
-            "Run build_model_report (or run_dashboard_pipeline.sh) first."
+            f"report.json not found: {report_path}. "
+            "Run build_model_report or build_app_report first."
         )
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    html_str = _render_html(model_id, model_dir, report)
-    out_path = model_dir / "report.html"
+    html_str = _render_html(report_path.parent, report)
+    out_path = report_path.parent / "report.html"
     out_path.write_text(html_str, encoding="utf-8")
     return out_path
+
+
+def render_one(outputs_root: Path, model_id: str) -> Path:
+    """Backward-compatible model-report wrapper around :func:`render_report`."""
+    return render_report(outputs_root / model_id / "report.json")
 
 
 def discover_reports(outputs_root: Path) -> list[str]:
