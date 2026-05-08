@@ -1113,8 +1113,8 @@ streamlit config show | grep -E "^address|^gatherUsageStats"
 
 阶段一定义：`turn_index == 0` 为单轮（任意 chat 的第一轮），`turn_index > 0` 为多轮。
 
-- F13 喂 `requests_single_turn.jsonl`（步骤 2 产物）
-- F14 喂全量 `requests.jsonl`（其内部按 chat 长度过滤多轮）
+- F13 / F14 都喂全量 `requests.jsonl`：`f13_prefix.yaml` 与 `f14_prefix.yaml` 的 `input_file` 实际都指向完整 jsonl。F13 模块内部用 `metadata["parent_chat_id"]` 识别 single-turn；业务数据没有该字段（见 `generate_f13_business.py` docstring）→ 每条记录自动视为 single-turn，效果上与 turn_index 过滤等价。F14 内部按 chat 长度做多轮过滤。
+- `requests_single_turn.jsonl`（pipeline 步骤 3 产物）目前**仅作为子集快照**保留，不被任何分析消费；保留它是为了将来若要修复 F13 真正吃 single-turn 子集时可直接接入。
 
 详见 [docs/可视化.md §1 决策 #9](./docs/可视化.md)。
 
