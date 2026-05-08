@@ -16,11 +16,14 @@ import pytest
 from block_prefix_analyzer.reports.app_compute import (
     build_app_section_1,
     build_app_section_2,
+    build_app_section_3,
     compute_app_f4,
+    compute_app_f13,
     compute_app_traffic,
     compute_peak_alignment,
     read_cross_app_user_hit_distribution,
     read_model_baseline,
+    read_model_f13_baseline,
     read_model_volume_bins,
 )
 
@@ -457,3 +460,153 @@ def test_build_app_section_2_empty_filter_yields_both_none(tmp_path: Path) -> No
     )
     assert section["app_traffic"] is None
     assert section["peak_alignment"] is None
+
+
+# ---------------------------------------------------------------------------
+# Section C (Step 4d) — F13 reuse-time
+# ---------------------------------------------------------------------------
+
+def test_compute_app_f13_basic_with_reuse_event(tmp_path: Path) -> None:
+    """Two requests with identical content 30s apart → reuse events at ~30s."""
+    src = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50),
+        _row("com.app", "r2", 30.0, "abc" * 50),
+    ])
+    out = compute_app_f13(src, block_size=16)
+    assert out is not None
+    assert out["block_size"] == 16
+    assert out["event_definition"] == "content_prefix_reuse"
+    assert out["single_turn_request_count"] == 2
+    assert out["reuse_event_count"] >= 1
+    assert out["stats_seconds"] is not None
+    # All reuse events have reuse_time = 30s (same prompt).
+    assert out["stats_seconds"]["p50"] == pytest.approx(30.0)
+    assert out["stats_seconds"]["p95"] == pytest.approx(30.0)
+
+
+def test_compute_app_f13_returns_none_for_empty_jsonl(tmp_path: Path) -> None:
+    src = tmp_path / "empty.jsonl"
+    src.write_text("", encoding="utf-8")
+    assert compute_app_f13(src, block_size=128) is None
+
+
+def test_compute_app_f13_no_reuse_events_yields_null_stats(tmp_path: Path) -> None:
+    """Two requests with completely disjoint content → zero reuse events."""
+    src = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50),
+        _row("com.app", "r2", 30.0, "xyz" * 50),
+    ])
+    out = compute_app_f13(src, block_size=16)
+    assert out is not None
+    assert out["reuse_event_count"] == 0
+    assert out["stats_seconds"] is None
+    assert out["single_turn_request_count"] == 2
+
+
+def test_compute_app_f13_no_turn_index_filter_applied(tmp_path: Path) -> None:
+    """Records with turn_index=1 are NOT excluded — confirms plan §5.3 path A."""
+    src = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.app", "request_id": "r1", "timestamp": 0.0,
+         "raw_prompt": "abc" * 50, "turn_index": 0},
+        {"user_id": "com.app", "request_id": "r2", "timestamp": 30.0,
+         "raw_prompt": "abc" * 50, "turn_index": 1},
+    ])
+    out = compute_app_f13(src, block_size=16)
+    assert out is not None
+    # If turn_index=1 had been filtered out, single_turn_request_count would be 1
+    # and there would be 0 reuse events. Both are 2 / >=1 here.
+    assert out["single_turn_request_count"] == 2
+    assert out["reuse_event_count"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# read_model_f13_baseline
+# ---------------------------------------------------------------------------
+
+def test_read_model_f13_baseline_basic(tmp_path: Path) -> None:
+    f13_dir = tmp_path / "f13_prefix"
+    f13_dir.mkdir()
+    (f13_dir / "metadata.json").write_text(json.dumps({
+        "single_turn_request_count": 100,
+        "event_definition": "content_prefix_reuse",
+    }), encoding="utf-8")
+    _write_csv(f13_dir / "cdf_series.csv",
+               ["reuse_time_seconds", "cdf"],
+               [[10.0, 0.45], [60.0, 0.85], [300.0, 0.99]])
+    out = read_model_f13_baseline(f13_dir)
+    assert out is not None
+    assert out["single_turn_request_count"] == 100
+    assert out["event_definition"] == "content_prefix_reuse"
+    assert out["stats_seconds"] is not None
+    assert out["stats_seconds"]["p50"] == 60.0
+    assert out["stats_seconds"]["p80"] == 60.0
+
+
+def test_read_model_f13_baseline_missing_metadata_returns_none(tmp_path: Path) -> None:
+    assert read_model_f13_baseline(tmp_path / "nope") is None
+
+
+def test_read_model_f13_baseline_corrupt_metadata_returns_none(tmp_path: Path) -> None:
+    f13_dir = tmp_path / "f13"
+    f13_dir.mkdir()
+    (f13_dir / "metadata.json").write_text("{not json", encoding="utf-8")
+    assert read_model_f13_baseline(f13_dir) is None
+
+
+def test_read_model_f13_baseline_no_cdf_csv_yields_null_stats(tmp_path: Path) -> None:
+    """Metadata exists but cdf_series.csv missing → stats_seconds = None,
+    metadata fields still populated."""
+    f13_dir = tmp_path / "f13"
+    f13_dir.mkdir()
+    (f13_dir / "metadata.json").write_text(json.dumps({
+        "single_turn_request_count": 50,
+    }), encoding="utf-8")
+    out = read_model_f13_baseline(f13_dir)
+    assert out is not None
+    assert out["stats_seconds"] is None
+    assert out["single_turn_request_count"] == 50
+
+
+# ---------------------------------------------------------------------------
+# build_app_section_3
+# ---------------------------------------------------------------------------
+
+def test_build_app_section_3_orchestrates_app_and_baseline(tmp_path: Path) -> None:
+    filtered = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50),
+        _row("com.app", "r2", 30.0, "abc" * 50),
+    ])
+    f13_dir = tmp_path / "f13"
+    f13_dir.mkdir()
+    (f13_dir / "metadata.json").write_text(json.dumps({
+        "single_turn_request_count": 1234,
+        "event_definition": "content_prefix_reuse",
+    }), encoding="utf-8")
+    _write_csv(f13_dir / "cdf_series.csv",
+               ["reuse_time_seconds", "cdf"],
+               [[20.0, 0.6], [120.0, 0.95]])
+    section = build_app_section_3(filtered, block_size=16, f13_dir=f13_dir)
+    assert section["app_f13"]["single_turn_request_count"] == 2
+    assert section["app_f13"]["stats_seconds"]["p50"] == pytest.approx(30.0)
+    assert section["model_baseline"]["single_turn_request_count"] == 1234
+
+
+def test_build_app_section_3_independent_subkey_optionality(tmp_path: Path) -> None:
+    """Missing model F13 dir leaves baseline=None but app_f13 still computed."""
+    filtered = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50),
+        _row("com.app", "r2", 30.0, "abc" * 50),
+    ])
+    section = build_app_section_3(
+        filtered, block_size=16, f13_dir=tmp_path / "missing"
+    )
+    assert section["app_f13"] is not None
+    assert section["model_baseline"] is None
+
+
+def test_build_app_section_3_empty_filter_yields_both_none(tmp_path: Path) -> None:
+    filtered = tmp_path / "empty.jsonl"
+    filtered.write_text("", encoding="utf-8")
+    section = build_app_section_3(filtered, block_size=16, f13_dir=tmp_path / "nope")
+    assert section["app_f13"] is None
+    assert section["model_baseline"] is None

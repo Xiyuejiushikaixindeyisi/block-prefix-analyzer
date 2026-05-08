@@ -304,9 +304,41 @@ build_app_registry.py 末尾打印：
 
 | 指标 | 来源 | 备注 |
 |---|---|---|
-| 该 APP 的 F13 reuse_time CDF | F13 重算（user_id 过滤 + turn_index==0 pre-filter） | per-app 主指标 |
-| 该 APP 的 reuse_time p50/p80/p95 | 同上 | TTL 锚点候选 |
-| 模型整体 F13 分位（对照） | model 级 report.json | |
+| 该 APP 的 reuse_time 分位 (p50/p75/p80/p95) | F13 重算（user_id 过滤后；**不再做 turn_index 预过滤**）| TTL 锚点候选；与模型级 baseline 同口径 |
+| 该 APP 的 reuse_event 总数 / single_turn 请求数 | 同上 | 规模上下文 |
+| 模型整体 F13 分位（对照）| 模型 `f13_prefix/{metadata.json,cdf_series.csv}`（已有 `f13_cdf_percentiles` 复用）| 横向对照 |
+
+> **不做 turn_index 预过滤的原因**（与 plan 早期描述对齐过的现状）：
+> - F13 模块内部用 `metadata["parent_chat_id"]` 识别 single-turn；业务数据没有该字段 →
+>   每条记录都自动视为 single-turn（`generate_f13_business.py` docstring 明确说明）。
+> - dashboard pipeline 生成 `requests_single_turn.jsonl`，但 `f13_prefix.yaml` 的
+>   `input_file` 实际指向**完整** `requests.jsonl`。即模型级 F13 也吃完整流。
+> - 若 per-APP 强行做 turn_index 预过滤，per-APP 与 model_baseline 不可比（口径不同）。
+>
+> 沿用 pipeline 实测行为 → per-APP 走 user_id 过滤后的子集，不再过滤 turn_index。
+> 若未来要修复 pipeline 让 F13 真正吃 single-turn 子集，应该作为独立的 Phase 1 修复，
+> 然后这里的 Section C 再相应跟进。
+>
+> **`section_3_locality` JSON 形状**：
+> ```jsonc
+> {
+>   "app_f13": {
+>     "stats_seconds": { p50, p75, p80, p95 },
+>     "single_turn_request_count": int,
+>     "reuse_event_count": int,
+>     "block_size": int,
+>     "event_definition": "content_prefix_reuse_blocks"
+>   } | null,
+>   "model_baseline": {
+>     "stats_seconds": { p50, p75, p80, p95 },
+>     "single_turn_request_count": int,
+>     "event_definition": "content_prefix_reuse_blocks"
+>   } | null
+> }
+> ```
+>
+> 不内嵌完整 CDF curve（只内嵌 4 个分位数 + 计数），渲染层做柱状对比即可。如未来要画
+> per-APP CDF 折线，再扩展。
 
 ### 5.4 Section D：System Prompt 共识块
 

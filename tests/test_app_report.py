@@ -470,3 +470,70 @@ def test_section_2_no_model_traffic_pattern_dir_no_peak_alignment(tmp_path: Path
     assert section is not None
     assert section["app_traffic"] is not None
     assert section["peak_alignment"] is None
+
+
+# ---------------------------------------------------------------------------
+# Step 4d — section_3 wiring
+# ---------------------------------------------------------------------------
+
+def test_section_3_remains_none_without_filtered_jsonl(tmp_path: Path) -> None:
+    report = assemble_app_report(
+        model_id="m", app_id="com.x", outputs_dir=tmp_path, history=[_entry()],
+    )
+    assert report["section_3_locality"] is None
+
+
+def test_section_3_populated_when_filtered_jsonl_provided(tmp_path: Path) -> None:
+    outputs_dir = tmp_path / "outputs"
+    f13_dir = outputs_dir / "f13_prefix"
+    _write_meta(f13_dir / "metadata.json", {
+        "single_turn_request_count": 999,
+        "event_definition": "content_prefix_reuse",
+    })
+    _write_csv_rows(
+        f13_dir / "cdf_series.csv",
+        ["reuse_time_seconds", "cdf"],
+        [[15.0, 0.5], [90.0, 0.9]],
+    )
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0,
+         "raw_prompt": "abc" * 50},
+        {"user_id": "com.x", "request_id": "r2", "timestamp": 30.0,
+         "raw_prompt": "abc" * 50},
+    ])
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x")],
+        filtered_jsonl=filtered,
+    )
+    section = report["section_3_locality"]
+    assert section is not None
+    assert section["app_f13"]["single_turn_request_count"] == 2
+    assert section["app_f13"]["reuse_event_count"] >= 1
+    assert section["app_f13"]["stats_seconds"]["p50"] == pytest.approx(30.0)
+    assert section["model_baseline"]["single_turn_request_count"] == 999
+    assert section["model_baseline"]["stats_seconds"]["p50"] == 15.0
+
+
+def test_section_3_no_model_f13_dir_baseline_is_null(tmp_path: Path) -> None:
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0,
+         "raw_prompt": "abc" * 50},
+        {"user_id": "com.x", "request_id": "r2", "timestamp": 30.0,
+         "raw_prompt": "abc" * 50},
+    ])
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x")],
+        filtered_jsonl=filtered,
+    )
+    section = report["section_3_locality"]
+    assert section is not None
+    assert section["app_f13"] is not None
+    assert section["model_baseline"] is None

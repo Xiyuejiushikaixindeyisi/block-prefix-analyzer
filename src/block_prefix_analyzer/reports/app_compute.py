@@ -31,6 +31,7 @@ import csv
 import json
 from pathlib import Path
 
+from block_prefix_analyzer.analysis.f13 import compute_f13_series
 from block_prefix_analyzer.analysis.f4 import F4Series, compute_f4_series
 from block_prefix_analyzer.analysis.traffic_pattern import (
     DEFAULT_BIN_SIZE_S,
@@ -38,7 +39,11 @@ from block_prefix_analyzer.analysis.traffic_pattern import (
 )
 from block_prefix_analyzer.io.business_loader import load_business_jsonl
 from block_prefix_analyzer.replay import replay
-from block_prefix_analyzer.reports.stats import percentile, user_hit_distribution
+from block_prefix_analyzer.reports.stats import (
+    f13_cdf_percentiles,
+    percentile,
+    user_hit_distribution,
+)
 
 PEAK_BIN_PERCENTILE: float = 90.0
 
@@ -282,3 +287,86 @@ def build_app_section_2(
         if model_bins:
             peak_alignment = compute_peak_alignment(app_traffic, model_bins)
     return {"app_traffic": app_traffic, "peak_alignment": peak_alignment}
+
+
+# ---------------------------------------------------------------------------
+# Section C (Step 4d) — temporal locality (F13 reuse-time)
+# ---------------------------------------------------------------------------
+
+_F13_PERCENTILES: tuple[int, ...] = (50, 75, 80, 95)
+
+
+def compute_app_f13(
+    filtered_jsonl: Path | str,
+    *,
+    block_size: int,
+    event_definition: str = "content_prefix_reuse",
+) -> dict | None:
+    """Compute F13 reuse-time stats on a filtered JSONL subset.
+
+    Returns ``None`` if the subset has zero records. ``stats_seconds`` is
+    ``None`` when no reuse events are observed (avoids reporting bogus
+    zero percentiles for empty event lists). Per plan §5.3 we do **not**
+    apply a turn_index pre-filter — F13's internal single-turn detection
+    on business data already accepts every record as single-turn, and
+    the model-level F13 also reads the full requests.jsonl, so per-APP
+    and model_baseline numbers stay comparable.
+    """
+    filtered_jsonl = Path(filtered_jsonl)
+    records = load_business_jsonl(filtered_jsonl, block_size=block_size)
+    if not records:
+        return None
+    series = compute_f13_series(records, event_definition=event_definition)
+    stats: dict[str, float] | None
+    if not series.events:
+        stats = None
+    else:
+        sorted_times = sorted(float(e.reuse_time_seconds) for e in series.events)
+        stats = {f"p{q}": percentile(sorted_times, q) for q in _F13_PERCENTILES}
+    return {
+        "stats_seconds": stats,
+        "single_turn_request_count": series.single_turn_request_count,
+        "reuse_event_count": series.content_block_reuse_event_count_total,
+        "block_size": block_size,
+        "event_definition": event_definition,
+    }
+
+
+def read_model_f13_baseline(f13_dir: Path | str) -> dict | None:
+    """Read model-level F13 stats from ``<f13_dir>/{metadata.json,cdf_series.csv}``.
+
+    Returns ``None`` when the metadata file is absent or unparsable.
+    ``stats_seconds`` may itself be ``None`` if the CDF csv is missing
+    or empty (rare; would mean F13 produced no events for the model).
+    """
+    f13_dir = Path(f13_dir)
+    metadata_path = f13_dir / "metadata.json"
+    if not metadata_path.exists():
+        return None
+    try:
+        meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return {
+        "stats_seconds": f13_cdf_percentiles(f13_dir / "cdf_series.csv"),
+        "single_turn_request_count": meta.get("single_turn_request_count"),
+        "event_definition": meta.get("event_definition"),
+    }
+
+
+def build_app_section_3(
+    filtered_jsonl: Path | str,
+    *,
+    block_size: int,
+    f13_dir: Path | str,
+    event_definition: str = "content_prefix_reuse",
+) -> dict:
+    """Assemble ``section_3_locality`` for an APP report."""
+    return {
+        "app_f13": compute_app_f13(
+            filtered_jsonl,
+            block_size=block_size,
+            event_definition=event_definition,
+        ),
+        "model_baseline": read_model_f13_baseline(f13_dir),
+    }

@@ -47,6 +47,7 @@ from block_prefix_analyzer.report_builder import (
 from block_prefix_analyzer.reports.app_compute import (
     build_app_section_1,
     build_app_section_2,
+    build_app_section_3,
 )
 from block_prefix_analyzer.reports.app_filter import FilterStats
 from block_prefix_analyzer.reports.app_registry import AppRegistryEntry
@@ -213,6 +214,7 @@ def assemble_app_report(
 
     section_1: dict | None = None
     section_2: dict | None = None
+    section_3: dict | None = None
     if filtered_jsonl is not None:
         effective_block_size = block_size or DEFAULT_BLOCK_SIZE_FALLBACK
         section_1 = build_app_section_1(
@@ -226,6 +228,11 @@ def assemble_app_report(
             block_size=effective_block_size,
             traffic_pattern_dir=outputs_dir / "traffic_pattern",
         )
+        section_3 = build_app_section_3(
+            filtered_jsonl=filtered_jsonl,
+            block_size=effective_block_size,
+            f13_dir=outputs_dir / "f13_prefix",
+        )
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -235,7 +242,7 @@ def assemble_app_report(
         ),
         "section_1_ideal_hit": section_1,
         "section_2_traffic": section_2,
-        "section_3_locality": None,
+        "section_3_locality": section_3,
         "section_4_content": None,
         "section_5_recommendations": [],
     }
