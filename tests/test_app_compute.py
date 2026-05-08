@@ -15,9 +15,13 @@ import pytest
 
 from block_prefix_analyzer.reports.app_compute import (
     build_app_section_1,
+    build_app_section_2,
     compute_app_f4,
+    compute_app_traffic,
+    compute_peak_alignment,
     read_cross_app_user_hit_distribution,
     read_model_baseline,
+    read_model_volume_bins,
 )
 
 
@@ -255,3 +259,201 @@ def test_build_app_section_1_empty_filter_yields_none_app_f4(tmp_path: Path) -> 
     assert section["app_f4"] is None
     assert section["model_baseline"] is None
     assert section["user_hit_distribution"] is None
+
+
+# ---------------------------------------------------------------------------
+# Section B (Step 4c) — traffic
+# ---------------------------------------------------------------------------
+
+def test_compute_app_traffic_basic(tmp_path: Path) -> None:
+    """Three requests at t=0,30,90 with default 60s bins → 2 bins."""
+    src = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 20),
+        _row("com.app", "r2", 30.0, "abc" * 20),
+        _row("com.app", "r3", 90.0, "abc" * 20),
+    ])
+    out = compute_app_traffic(src, block_size=16, bin_size_s=60)
+    assert out is not None
+    assert out["bin_size_s"] == 60
+    assert out["total_requests"] == 3
+    assert out["duration_s"] == pytest.approx(90.0)
+    assert out["first_timestamp_s"] == pytest.approx(0.0)
+    # Bins are inline lists for JSON compatibility, not tuples.
+    assert out["volume_series"] == [[0, 2], [60, 1]]
+    assert all(
+        isinstance(v, (int, float))
+        for v in out["interval_percentiles"].values()
+    )
+
+
+def test_compute_app_traffic_returns_none_for_empty_jsonl(tmp_path: Path) -> None:
+    src = tmp_path / "empty.jsonl"
+    src.write_text("", encoding="utf-8")
+    assert compute_app_traffic(src, block_size=128, bin_size_s=60) is None
+
+
+def test_compute_app_traffic_respects_bin_size_param(tmp_path: Path) -> None:
+    src = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 20),
+        _row("com.app", "r2", 100.0, "abc" * 20),
+    ])
+    out_60 = compute_app_traffic(src, block_size=16, bin_size_s=60)
+    out_300 = compute_app_traffic(src, block_size=16, bin_size_s=300)
+    assert out_60 is not None and out_300 is not None
+    # 60s bins → t=0 and t=100 land in bin 0 and bin 60.
+    assert out_60["volume_series"] == [[0, 1], [60, 1]]
+    # 300s bins → both in bin 0.
+    assert out_300["volume_series"] == [[0, 2]]
+
+
+# ---------------------------------------------------------------------------
+# read_model_volume_bins
+# ---------------------------------------------------------------------------
+
+def test_read_model_volume_bins_basic(tmp_path: Path) -> None:
+    p = tmp_path / "volume.csv"
+    _write_csv(p, ["bin_start_s", "request_count"], [
+        [0, 5], [60, 12], [120, 3], [180, 25],
+    ])
+    bins = read_model_volume_bins(p)
+    assert bins == [(0, 5), (60, 12), (120, 3), (180, 25)]
+
+
+def test_read_model_volume_bins_missing_returns_none(tmp_path: Path) -> None:
+    assert read_model_volume_bins(tmp_path / "missing.csv") is None
+
+
+def test_read_model_volume_bins_skips_unparseable_rows(tmp_path: Path) -> None:
+    p = tmp_path / "volume.csv"
+    p.write_text(
+        "bin_start_s,request_count\n"
+        "0,5\n"
+        "not_an_int,7\n"
+        "60,8\n",
+        encoding="utf-8",
+    )
+    assert read_model_volume_bins(p) == [(0, 5), (60, 8)]
+
+
+# ---------------------------------------------------------------------------
+# compute_peak_alignment
+# ---------------------------------------------------------------------------
+
+def test_peak_alignment_simple_distribution() -> None:
+    """Model bins counts = [1, 2, 3, 5, 10]; p90 = 8.0; peak bins = {bin@10}."""
+    model_bins = [(0, 1), (60, 2), (120, 3), (180, 5), (240, 10)]
+    app_traffic = {
+        "total_requests": 5,
+        "volume_series": [[0, 1], [180, 1], [240, 3]],
+    }
+    out = compute_peak_alignment(app_traffic, model_bins)
+    assert out is not None
+    assert out["model_volume_p90"] == pytest.approx(8.0)
+    assert out["model_total_bins"] == 5
+    assert out["model_peak_bins"] == 1                  # only bin@240 has count >= 8
+    assert out["app_total_requests"] == 5
+    assert out["app_requests_in_peak_bins"] == 3        # the 3 requests in bin@240
+    assert out["peak_alignment_ratio"] == pytest.approx(0.6)
+
+
+def test_peak_alignment_zero_when_app_avoids_peak() -> None:
+    model_bins = [(0, 1), (60, 1), (120, 100)]   # bin@120 is the peak
+    app_traffic = {"total_requests": 4, "volume_series": [[0, 4]]}
+    out = compute_peak_alignment(app_traffic, model_bins)
+    assert out is not None
+    assert out["app_requests_in_peak_bins"] == 0
+    assert out["peak_alignment_ratio"] == 0.0
+
+
+def test_peak_alignment_ratio_one_when_app_only_active_in_peak() -> None:
+    model_bins = [(0, 1), (60, 1), (120, 1), (180, 100)]
+    app_traffic = {"total_requests": 7, "volume_series": [[180, 7]]}
+    out = compute_peak_alignment(app_traffic, model_bins)
+    assert out is not None
+    assert out["peak_alignment_ratio"] == 1.0
+
+
+def test_peak_alignment_returns_none_for_empty_model() -> None:
+    app_traffic = {"total_requests": 1, "volume_series": [[0, 1]]}
+    assert compute_peak_alignment(app_traffic, []) is None
+
+
+def test_peak_alignment_handles_zero_app_requests() -> None:
+    """Edge case: app_traffic claims zero requests; ratio falls back to 0.0."""
+    model_bins = [(0, 1), (60, 5)]
+    app_traffic = {"total_requests": 0, "volume_series": []}
+    out = compute_peak_alignment(app_traffic, model_bins)
+    assert out is not None
+    assert out["peak_alignment_ratio"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# build_app_section_2
+# ---------------------------------------------------------------------------
+
+def test_build_app_section_2_orchestrates_traffic_and_alignment(tmp_path: Path) -> None:
+    filtered = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 20),
+        _row("com.app", "r2", 30.0, "abc" * 20),
+        _row("com.app", "r3", 240.0, "abc" * 20),
+    ])
+    tp_dir = tmp_path / "traffic_pattern"
+    tp_dir.mkdir()
+    (tp_dir / "metadata.json").write_text(
+        json.dumps({"bin_size_s": 60}), encoding="utf-8"
+    )
+    _write_csv(
+        tp_dir / "volume.csv",
+        ["bin_start_s", "request_count"],
+        [[0, 1], [60, 2], [120, 3], [180, 5], [240, 10]],
+    )
+    section = build_app_section_2(filtered, block_size=16, traffic_pattern_dir=tp_dir)
+    assert section["app_traffic"]["total_requests"] == 3
+    assert section["app_traffic"]["volume_series"] == [[0, 2], [240, 1]]
+    pa = section["peak_alignment"]
+    assert pa is not None
+    assert pa["model_total_bins"] == 5
+    assert pa["model_peak_bins"] == 1
+    assert pa["app_total_requests"] == 3
+    assert pa["app_requests_in_peak_bins"] == 1
+    assert pa["peak_alignment_ratio"] == pytest.approx(1 / 3)
+
+
+def test_build_app_section_2_uses_model_bin_size_from_metadata(tmp_path: Path) -> None:
+    """If model used 300s bins, app traffic must be re-bucketed at 300s
+    too — otherwise bin_start_s values won't align with model."""
+    filtered = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 20),
+        _row("com.app", "r2", 200.0, "abc" * 20),
+    ])
+    tp_dir = tmp_path / "traffic_pattern"
+    tp_dir.mkdir()
+    (tp_dir / "metadata.json").write_text(
+        json.dumps({"bin_size_s": 300}), encoding="utf-8"
+    )
+    _write_csv(tp_dir / "volume.csv", ["bin_start_s", "request_count"], [[0, 99]])
+    section = build_app_section_2(filtered, block_size=16, traffic_pattern_dir=tp_dir)
+    assert section["app_traffic"]["bin_size_s"] == 300
+    assert section["app_traffic"]["volume_series"] == [[0, 2]]
+
+
+def test_build_app_section_2_no_model_dir_yields_no_peak(tmp_path: Path) -> None:
+    """No traffic_pattern dir → app_traffic still computed, peak_alignment None."""
+    filtered = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 20),
+    ])
+    section = build_app_section_2(
+        filtered, block_size=16, traffic_pattern_dir=tmp_path / "missing"
+    )
+    assert section["app_traffic"] is not None
+    assert section["peak_alignment"] is None
+
+
+def test_build_app_section_2_empty_filter_yields_both_none(tmp_path: Path) -> None:
+    filtered = tmp_path / "empty.jsonl"
+    filtered.write_text("", encoding="utf-8")
+    section = build_app_section_2(
+        filtered, block_size=16, traffic_pattern_dir=tmp_path / "nope"
+    )
+    assert section["app_traffic"] is None
+    assert section["peak_alignment"] is None

@@ -11,6 +11,8 @@ import csv as _csv
 import json
 from pathlib import Path
 
+import pytest
+
 from block_prefix_analyzer.report_builder import SCHEMA_VERSION
 from block_prefix_analyzer.reports.app_filter import FilterStats
 from block_prefix_analyzer.reports.app_registry import AppRegistryEntry
@@ -390,3 +392,81 @@ def test_section_1_app_f4_none_when_filtered_jsonl_empty(tmp_path: Path) -> None
     assert section["app_f4"] is None
     assert section["model_baseline"] is None
     assert section["user_hit_distribution"] is None
+
+
+# ---------------------------------------------------------------------------
+# Step 4c — section_2 + meta.time_range wiring
+# ---------------------------------------------------------------------------
+
+def test_section_2_remains_none_without_filtered_jsonl(tmp_path: Path) -> None:
+    report = assemble_app_report(
+        model_id="m", app_id="com.x", outputs_dir=tmp_path, history=[_entry()],
+    )
+    assert report["section_2_traffic"] is None
+    assert report["meta"]["time_range"] is None
+
+
+def test_section_2_populated_when_filtered_jsonl_provided(tmp_path: Path) -> None:
+    outputs_dir = tmp_path / "outputs"
+    _write_meta(outputs_dir / "traffic_pattern" / "metadata.json", {"bin_size_s": 60})
+    _write_csv_rows(
+        outputs_dir / "traffic_pattern" / "volume.csv",
+        ["bin_start_s", "request_count"],
+        [[0, 1], [60, 1], [120, 1], [180, 1], [240, 50]],   # peak at 240
+    )
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0, "raw_prompt": "abc" * 20},
+        {"user_id": "com.x", "request_id": "r2", "timestamp": 240.0, "raw_prompt": "abc" * 20},
+    ])
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x")],
+        filtered_jsonl=filtered,
+    )
+    section = report["section_2_traffic"]
+    assert section is not None
+    assert section["app_traffic"]["total_requests"] == 2
+    assert section["app_traffic"]["volume_series"] == [[0, 1], [240, 1]]
+    assert section["peak_alignment"]["peak_alignment_ratio"] == pytest.approx(0.5)
+
+
+def test_section_2_meta_time_range_filled_from_app_traffic(tmp_path: Path) -> None:
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0, "raw_prompt": "abc" * 20},
+        {"user_id": "com.x", "request_id": "r2", "timestamp": 7200.0, "raw_prompt": "abc" * 20},
+    ])
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x")],
+        filtered_jsonl=filtered,
+    )
+    tr = report["meta"]["time_range"]
+    assert tr is not None
+    assert tr["start_s"] == pytest.approx(0.0)
+    assert tr["end_s"] == pytest.approx(7200.0)
+    assert tr["duration_h"] == pytest.approx(2.0)
+
+
+def test_section_2_no_model_traffic_pattern_dir_no_peak_alignment(tmp_path: Path) -> None:
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0, "raw_prompt": "abc" * 20},
+    ])
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x")],
+        filtered_jsonl=filtered,
+    )
+    section = report["section_2_traffic"]
+    assert section is not None
+    assert section["app_traffic"] is not None
+    assert section["peak_alignment"] is None

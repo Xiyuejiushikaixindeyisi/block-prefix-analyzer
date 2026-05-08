@@ -27,13 +27,20 @@ dashboard's primary curve.
 """
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
 from block_prefix_analyzer.analysis.f4 import F4Series, compute_f4_series
+from block_prefix_analyzer.analysis.traffic_pattern import (
+    DEFAULT_BIN_SIZE_S,
+    compute_traffic_pattern,
+)
 from block_prefix_analyzer.io.business_loader import load_business_jsonl
 from block_prefix_analyzer.replay import replay
-from block_prefix_analyzer.reports.stats import user_hit_distribution
+from block_prefix_analyzer.reports.stats import percentile, user_hit_distribution
+
+PEAK_BIN_PERCENTILE: float = 90.0
 
 
 def compute_app_f4(
@@ -142,3 +149,136 @@ def build_app_section_1(
             e1_dir, block_size=block_size
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Section B (Step 4c) — traffic cadence + peak alignment
+# ---------------------------------------------------------------------------
+
+def compute_app_traffic(
+    filtered_jsonl: Path | str,
+    *,
+    block_size: int,
+    bin_size_s: int = DEFAULT_BIN_SIZE_S,
+) -> dict | None:
+    """Compute per-APP traffic signals on the filtered JSONL subset.
+
+    Returns ``None`` if the subset has zero records. ``volume_series`` is
+    converted from the analysis module's tuple form to ``[bin, count]``
+    list pairs so the section can be embedded inline in JSON.
+    """
+    filtered_jsonl = Path(filtered_jsonl)
+    records = load_business_jsonl(filtered_jsonl, block_size=block_size)
+    if not records:
+        return None
+    result = compute_traffic_pattern(records, bin_size_s=bin_size_s)
+    if result.total_requests == 0:
+        return None
+    return {
+        "interval_percentiles": dict(result.interval_percentiles),
+        "volume_series": [[int(bs), int(c)] for bs, c in result.volume_series],
+        "bin_size_s": result.bin_size_s,
+        "total_requests": result.total_requests,
+        "duration_s": result.duration_s,
+        "first_timestamp_s": result.first_timestamp_s,
+    }
+
+
+def read_model_volume_bins(volume_csv_path: Path | str) -> list[tuple[int, int]] | None:
+    """Read ``traffic_pattern/volume.csv`` into ``[(bin_start_s, count), ...]``.
+
+    Returns ``None`` for missing or unparsable files; caller should treat
+    that as "model traffic_pattern not available, skip peak alignment".
+    """
+    volume_csv_path = Path(volume_csv_path)
+    if not volume_csv_path.exists():
+        return None
+    bins: list[tuple[int, int]] = []
+    with volume_csv_path.open(encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                bins.append((int(row["bin_start_s"]), int(row["request_count"])))
+            except (KeyError, ValueError):
+                continue
+    return bins or None
+
+
+def _read_model_traffic_bin_size(metadata_path: Path) -> int:
+    """Best-effort read of the model traffic_pattern bin_size_s.
+
+    Falls back to ``DEFAULT_BIN_SIZE_S`` when the metadata file is missing,
+    corrupt, or lacks the field — same semantic as load_metadata_blobs.
+    Per-APP and model bins must share bin_size_s for alignment to work.
+    """
+    if not metadata_path.exists():
+        return DEFAULT_BIN_SIZE_S
+    try:
+        data = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return DEFAULT_BIN_SIZE_S
+    raw = data.get("bin_size_s")
+    try:
+        return int(raw) if raw is not None else DEFAULT_BIN_SIZE_S
+    except (TypeError, ValueError):
+        return DEFAULT_BIN_SIZE_S
+
+
+def compute_peak_alignment(
+    app_traffic: dict,
+    model_volume_bins: list[tuple[int, int]],
+    *,
+    threshold_percentile: float = PEAK_BIN_PERCENTILE,
+) -> dict | None:
+    """Quantify how concentrated the APP's requests are in model peak bins.
+
+    "Peak bins" are model bins whose ``request_count`` is at or above the
+    ``threshold_percentile`` of all model bin counts (default p90 → top
+    10% of model bins by count). The returned ``peak_alignment_ratio`` is
+    the fraction of the APP's requests landing in those bins.
+
+    Returns ``None`` if ``model_volume_bins`` is empty.
+    """
+    if not model_volume_bins:
+        return None
+    counts_sorted = sorted(float(c) for _, c in model_volume_bins)
+    threshold = percentile(counts_sorted, threshold_percentile)
+    peak_bin_starts = {bs for bs, c in model_volume_bins if c >= threshold}
+    app_total = int(app_traffic["total_requests"])
+    in_peak = sum(
+        c for bs, c in app_traffic["volume_series"] if bs in peak_bin_starts
+    )
+    return {
+        "model_volume_p90": threshold,
+        "model_total_bins": len(model_volume_bins),
+        "model_peak_bins": len(peak_bin_starts),
+        "app_total_requests": app_total,
+        "app_requests_in_peak_bins": int(in_peak),
+        "peak_alignment_ratio": (in_peak / app_total) if app_total > 0 else 0.0,
+    }
+
+
+def build_app_section_2(
+    filtered_jsonl: Path | str,
+    *,
+    block_size: int,
+    traffic_pattern_dir: Path | str,
+) -> dict:
+    """Assemble ``section_2_traffic`` for an APP report.
+
+    Reads the model's ``bin_size_s`` from
+    ``traffic_pattern_dir/metadata.json`` (default 60s) so the per-APP
+    bins align with the model's, then computes peak alignment against
+    ``traffic_pattern_dir/volume.csv``.
+    """
+    traffic_pattern_dir = Path(traffic_pattern_dir)
+    bin_size_s = _read_model_traffic_bin_size(traffic_pattern_dir / "metadata.json")
+    app_traffic = compute_app_traffic(
+        filtered_jsonl, block_size=block_size, bin_size_s=bin_size_s
+    )
+    peak_alignment = None
+    if app_traffic is not None:
+        model_bins = read_model_volume_bins(traffic_pattern_dir / "volume.csv")
+        if model_bins:
+            peak_alignment = compute_peak_alignment(app_traffic, model_bins)
+    return {"app_traffic": app_traffic, "peak_alignment": peak_alignment}

@@ -44,7 +44,10 @@ from block_prefix_analyzer.report_builder import (
     SCHEMA_VERSION,
     compute_data_version,
 )
-from block_prefix_analyzer.reports.app_compute import build_app_section_1
+from block_prefix_analyzer.reports.app_compute import (
+    build_app_section_1,
+    build_app_section_2,
+)
 from block_prefix_analyzer.reports.app_filter import FilterStats
 from block_prefix_analyzer.reports.app_registry import AppRegistryEntry
 from block_prefix_analyzer.reports.sections import (
@@ -112,25 +115,40 @@ def _filter_stats_to_dict(stats: FilterStats) -> dict:
     }
 
 
+def _time_range_from_app_traffic(app_traffic: dict | None) -> dict | None:
+    if app_traffic is None:
+        return None
+    start_s = float(app_traffic["first_timestamp_s"])
+    duration_s = float(app_traffic["duration_s"])
+    return {
+        "start_s": start_s,
+        "end_s": start_s + duration_s,
+        "duration_h": round(duration_s / 3600.0, 4),
+    }
+
+
 def _build_meta(
     model_id: str,
     app_id: str,
     block_size: int | None,
     input_file: Path | None,
     filter_stats: FilterStats | None = None,
+    section_2: dict | None = None,
 ) -> dict:
     """Meta block for an APP report.
 
     ``total_requests`` is filled from ``filter_stats.kept_count`` when the
-    caller has run :func:`reports.app_filter.write_filtered_jsonl`. The
-    ``time_range`` field is left as ``None`` by Step 4b and is filled by
-    Step 4c (per-APP traffic timeseries).
+    caller has run :func:`reports.app_filter.write_filtered_jsonl`.
+    ``time_range`` is filled from ``section_2.app_traffic`` (Step 4c).
     """
     total_requests: int | None = None
     app_filter_stats: dict | None = None
     if filter_stats is not None:
         total_requests = filter_stats.kept_count
         app_filter_stats = _filter_stats_to_dict(filter_stats)
+    time_range = _time_range_from_app_traffic(
+        section_2.get("app_traffic") if section_2 else None
+    )
     return {
         "trace_name": f"{model_id}/{app_id}",
         "model_id": model_id,
@@ -138,7 +156,7 @@ def _build_meta(
         "input_file": str(input_file) if input_file else None,
         "block_size": block_size,
         "total_requests": total_requests,
-        "time_range": None,
+        "time_range": time_range,
         "app_filter_stats": app_filter_stats,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "data_version": compute_data_version(input_file),
@@ -194,6 +212,7 @@ def assemble_app_report(
     block_size = discover_block_size(meta_blobs)
 
     section_1: dict | None = None
+    section_2: dict | None = None
     if filtered_jsonl is not None:
         effective_block_size = block_size or DEFAULT_BLOCK_SIZE_FALLBACK
         section_1 = build_app_section_1(
@@ -202,13 +221,20 @@ def assemble_app_report(
             f4_metadata_path=outputs_dir / "f4_prefix" / "metadata.json",
             e1_dir=outputs_dir / "e1_user_hit_rate",
         )
+        section_2 = build_app_section_2(
+            filtered_jsonl=filtered_jsonl,
+            block_size=effective_block_size,
+            traffic_pattern_dir=outputs_dir / "traffic_pattern",
+        )
 
     return {
         "schema_version": SCHEMA_VERSION,
         "scope": _build_scope(model_id, app_id, history),
-        "meta": _build_meta(model_id, app_id, block_size, input_file, filter_stats),
+        "meta": _build_meta(
+            model_id, app_id, block_size, input_file, filter_stats, section_2
+        ),
         "section_1_ideal_hit": section_1,
-        "section_2_traffic": None,
+        "section_2_traffic": section_2,
         "section_3_locality": None,
         "section_4_content": None,
         "section_5_recommendations": [],

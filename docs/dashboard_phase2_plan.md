@@ -270,9 +270,35 @@ build_app_registry.py 末尾打印：
 
 | 指标 | 来源 | 备注 |
 |---|---|---|
-| 该 APP 的请求时序（按小时聚合） | 在 user_id 过滤后的子集上重算 | 路由策略输入信号 |
-| 该 APP 的并发节奏分位 | 同上 | |
-| 该 APP 活跃时段是否与全局流量高峰重合 | 与 model 级 traffic_pattern 对照 | 路由价值代理 |
+| 该 APP 的请求时序 | per-APP `compute_traffic_pattern` | inline `volume_series`（默认 60s bin，与模型对齐）|
+| 该 APP 的并发节奏分位 (p50/p75/p80/p95) | 同上 | inline `interval_percentiles` |
+| 该 APP 活跃时段是否与全局流量高峰重合 | 与模型 `traffic_pattern/volume.csv` 对照 | **p90 阈值**：模型 bin 计数 ≥ p90 = "高峰 bin"；该 APP 落在高峰 bin 的请求占比 = `peak_alignment_ratio` |
+
+> **bin 对齐**：per-APP 的 `bin_size_s` 必须等于模型的 `bin_size_s`（默认 60s），
+> 否则 bin_start_s 值不对齐、peak_alignment 不可解释。实施层从模型
+> `traffic_pattern/metadata.json` 读 `bin_size_s` 后传给 per-APP 重算。
+>
+> **`section_2_traffic` JSON 形状**：
+> ```jsonc
+> {
+>   "app_traffic": {
+>     "interval_percentiles": { p50, p75, p80, p95 },
+>     "volume_series": [[bin_start_s, count], ...],   // inline, sparse
+>     "bin_size_s", "total_requests", "duration_s", "first_timestamp_s"
+>   } | null,
+>   "peak_alignment": {
+>     "model_volume_p90": float,
+>     "model_total_bins": int,
+>     "model_peak_bins": int,
+>     "app_total_requests": int,
+>     "app_requests_in_peak_bins": int,
+>     "peak_alignment_ratio": float
+>   } | null
+> }
+> ```
+>
+> Step 4f 把 `peak_alignment_ratio` 映射成 高/中/低 路由价值标签（plan §5.5）。
+> `meta.time_range` 在 4c 一并填实，由 `app_traffic.first_timestamp_s` + `duration_s` 派生。
 
 ### 5.3 Section C：时间局部性
 
