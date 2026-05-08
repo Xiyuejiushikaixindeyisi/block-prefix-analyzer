@@ -14,6 +14,7 @@
 | [docs/kv_cache_eviction_design.md](./docs/kv_cache_eviction_design.md) | Two-Queue TTL KV cache 淘汰算法设计 (v1.0) |
 | [docs/two_queue_ttl_experiment_plan.md](./docs/two_queue_ttl_experiment_plan.md) | Two-Queue TTL 实验计划 v1.1（F13 锚定 TTL + registry） |
 | [docs/可视化.md](./docs/可视化.md) | Phase 1 Dashboard 实施计划 + 全部设计决策 |
+| [docs/dashboard_phase2_plan.md](./docs/dashboard_phase2_plan.md) | Dashboard Phase 2 — APP 级报告设计与实施计划 |
 
 离线分析 LLM 请求 trace 中 **block 级前缀复用** 的工具。
 
@@ -1129,6 +1130,86 @@ streamlit config show | grep -E "^address|^gatherUsageStats"
 - ❌ 自动重跑（数据变更检测）—— 重跑由人决定
 - ❌ F4 / F13 / F14 reusable 变体进 dashboard（业界非 prefix cache 仅实验）
 - ❌ e5_block_text 跑长上下文（64k+ 需 2h+，已用 common_prefix 替代）
+
+---
+
+## Dashboard Phase 2 — APP 级报告
+
+输入 `(model_id, app_id)` → 该 APP 在该模型上的独立 HTML 报告（4 个 section + 顶部相对位置卡片）。复用 Phase 1 的模型级产物，per-APP 重算 F4 / F13 / common_prefix / traffic_pattern。完整设计见 [docs/dashboard_phase2_plan.md](./docs/dashboard_phase2_plan.md)。
+
+### 前置：Phase 1 已跑通
+
+APP 报告读 `outputs/maas/<MODEL>/{f4_prefix,f13_prefix,common_prefix,e1_user_hit_rate,traffic_pattern}/` 做基线对照与横向分布派生，所以 Phase 1 dashboard 必须先跑过：
+
+```bash
+DATA_ROOT=/data/internal scripts/run_dashboard_pipeline.sh <MODEL>
+```
+
+### 一次性：从月度会议 csv 生成 APP 注册表
+
+每月新会议 csv 到位后跑一次：
+
+```bash
+python scripts/build_app_registry.py \
+    --csv data/internal/meetings/<YYYY-MM>.csv \
+    --output configs/app_registry.csv
+```
+
+注册表过滤规则（plan §2.1，硬编码）：`评审结论=同意` ∧ `资源使用方式=共享模型（API调用）` ∧ `任务类型=推理`。同一 `app_id` 多次申请**全部保留**（plan §3.1），一行 = 一次申请记录。脚本末尾打印 §3.4 数据完整性检查（注册表 vs 各模型日志 user_id 集合），缺失率 > 30% 时告警。
+
+### 按需：单个 APP 的报告
+
+```bash
+python scripts/build_app_report.py \
+    --model qwen_v3_5_27b_64k \
+    --app   com.huawei.driver.adn.net
+```
+
+输出位置（`outputs/` 全局 gitignore）：
+
+```
+outputs/maas/<MODEL>/apps/<APP_ID>/
+    filtered_requests.jsonl    # 该 APP 的请求子集（per-APP 重算输入）
+    report.json                # v1.2 schema, kind="app"
+    report.html                # 单文件 HTML，base64-内嵌图表
+```
+
+每次运行典型 1–3 分钟（per-APP 子集小，比模型级快 10× 以上）。
+
+### Unregistered APP fallback
+
+`app_id` 不在注册表里也照样产报告，**不静默跳过**（plan §3.3）：
+
+- `scope.product_name = "<unregistered>"`
+- `scope.declared_model = null`
+- `scope.app_history = []`
+- HTML 顶部出现 ⚠ warning 横幅
+
+注册表 CSV 整个文件缺失时同样按 unregistered 处理 + stderr 警告。
+
+### 报告内容
+
+| 区域 | 内容 |
+|---|---|
+| 顶部 Relative Position 卡片 | 请求量分位 / 命中率 vs 模型中位 / 共识 prefix 长度 / 高峰对齐标签 / 申报模型一致性 |
+| Section A — 命中率画像 | 该 APP ideal prefix hit rate（F4 重算）+ 模型基线 + 同模型 APP 中位/p80/p90 |
+| Section B — 流量节奏 | 该 APP 请求时序（inline volume_series 折线）+ 间隔分位 + 与模型流量高峰对齐度 |
+| Section C — 时间局部性 | 该 APP F13 reuse-time 分位（p50/p75/p80/p95）+ 模型基线 |
+| Section D — System Prompt 共识 | 该 APP 共识块 top-20（含 content_type_guess）+ 与模型 common_prefix 重叠 |
+| 申请历史表 | scope.app_history 完整渲染（仅 registered；多模型申请时全列） |
+
+JSON schema 与 model 报告差异（v1.1 → v1.2）：
+
+- 顶层多 `relative_position` 字段（model 报告无此字段）
+- `scope` 加 `app_id` / `product_name` / `declared_model` / `app_history`（model 报告中均为 null）
+- `schema_version` 同步升到 1.2；既有 model 报告下次 build 时自然升级，字段顺序不变
+
+### 关键设计决策
+
+- **block_size sweep 单档**：APP 级只跑 deployment block_size（典型 128），不跑 4 档；per-APP 决策无需对比 sweep 曲线，省 75% 算力（plan §5.1）
+- **F13 不做 turn_index 预过滤**：保持与模型级 F13 同口径——pipeline 实测模型 F13 也吃完整 jsonl（plan §5.3 path A）
+- **common_prefix `min_count=2`**：模型级 10 太严，对小 APP 直接产生空 consensus；改 2 让 ≥2 共享即算共识（plan §5.4）
+- **不修改任何 Phase 1 analysis 模块**（plan §10 invariant）
 
 ---
 
