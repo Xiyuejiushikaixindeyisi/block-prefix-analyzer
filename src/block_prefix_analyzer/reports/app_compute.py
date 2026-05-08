@@ -31,6 +31,11 @@ import csv
 import json
 from pathlib import Path
 
+from block_prefix_analyzer.analysis.common_prefix import (
+    CommonPrefixResult,
+    find_common_prefix,
+)
+from block_prefix_analyzer.analysis.content_classifier import classify_content
 from block_prefix_analyzer.analysis.f13 import compute_f13_series
 from block_prefix_analyzer.analysis.f4 import F4Series, compute_f4_series
 from block_prefix_analyzer.analysis.traffic_pattern import (
@@ -44,6 +49,11 @@ from block_prefix_analyzer.reports.stats import (
     percentile,
     user_hit_distribution,
 )
+
+DEFAULT_APP_COMMON_PREFIX_MIN_COUNT: int = 2
+DEFAULT_APP_CONSENSUS_TOP_N: int = 20
+DEFAULT_DECODED_TEXT_PREVIEW_CHARS: int = 500
+DEFAULT_COMMON_PREFIX_MAX_BLOCKS: int = 100_000
 
 PEAK_BIN_PERCENTILE: float = 90.0
 
@@ -370,3 +380,170 @@ def build_app_section_3(
         ),
         "model_baseline": read_model_f13_baseline(f13_dir),
     }
+
+
+# ---------------------------------------------------------------------------
+# Section D (Step 4e) — system prompt consensus + model overlap
+# ---------------------------------------------------------------------------
+
+def compute_app_common_prefix(
+    filtered_jsonl: Path | str,
+    *,
+    block_size: int,
+    min_count: int = DEFAULT_APP_COMMON_PREFIX_MIN_COUNT,
+    max_blocks: int = DEFAULT_COMMON_PREFIX_MAX_BLOCKS,
+) -> CommonPrefixResult | None:
+    """Run the common-prefix scan on a per-APP filtered JSONL subset.
+
+    ``min_count=2`` (per plan §5.4 decision) — any block shared by at
+    least 2 of the APP's requests counts toward the consensus prefix.
+    Single-request APPs naturally yield an empty consensus: every
+    position has count=1 which is below the threshold.
+
+    Returns ``None`` when the filtered subset has zero records. When
+    records exist but no consensus is found, returns a
+    :class:`CommonPrefixResult` whose ``consensus_blocks`` list is empty.
+    """
+    filtered_jsonl = Path(filtered_jsonl)
+    registry: dict[int, str] = {}
+    records = load_business_jsonl(
+        filtered_jsonl, block_size=block_size, block_registry=registry
+    )
+    if not records:
+        return None
+    return find_common_prefix(
+        records,
+        block_registry=registry,
+        block_size=block_size,
+        min_count=min_count,
+        max_blocks=max_blocks,
+    )
+
+
+def read_model_consensus_block_ids(
+    coverage_csv_path: Path | str,
+) -> set[str] | None:
+    """Read the set of block_ids in the model's ``coverage_profile.csv``.
+
+    Block IDs are kept as strings (matching the CSV serialization) so
+    that overlap comparison with stringified per-APP block_ids works
+    independent of the underlying integer / string type.
+
+    Returns ``None`` when the file is missing or has no usable rows
+    (signals "model common_prefix unavailable; skip overlap").
+    """
+    coverage_csv_path = Path(coverage_csv_path)
+    if not coverage_csv_path.exists():
+        return None
+    block_ids: set[str] = set()
+    with coverage_csv_path.open(encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            bid = row.get("block_id")
+            if bid:
+                block_ids.add(str(bid).strip())
+    return block_ids or None
+
+
+def compute_consensus_overlap(
+    app_block_ids: set[str], model_block_ids: set[str]
+) -> dict:
+    """Compute the consensus-block overlap between the APP and the model.
+
+    Both sides are sets of distinct block_ids; the overlap measures shared
+    *content* (unique block hashes), not shared positions. For typical
+    non-periodic prompts the two views coincide (each position carries a
+    unique block_id). For pathological periodic content, multiple positions
+    can share one block_id and the unique count will be lower than the
+    position count — the consensus_blocks list in ``app_consensus`` retains
+    the position-level detail for inspection.
+
+    Empty sides yield zero ratios (instead of ZeroDivisionError) so callers
+    can report "this APP shares nothing" or "the model has no consensus"
+    without special-casing.
+    """
+    shared = app_block_ids & model_block_ids
+    return {
+        "model_unique_block_count": len(model_block_ids),
+        "app_unique_block_count": len(app_block_ids),
+        "shared_block_count": len(shared),
+        "overlap_ratio_app": (len(shared) / len(app_block_ids))
+        if app_block_ids
+        else 0.0,
+        "overlap_ratio_model": (len(shared) / len(model_block_ids))
+        if model_block_ids
+        else 0.0,
+    }
+
+
+def _consensus_result_to_section_dict(
+    result: CommonPrefixResult,
+    *,
+    top_n: int = DEFAULT_APP_CONSENSUS_TOP_N,
+    preview_chars: int = DEFAULT_DECODED_TEXT_PREVIEW_CHARS,
+) -> dict:
+    """Convert a :class:`CommonPrefixResult` into the public app-section JSON
+    shape (top-N consensus blocks with text previews + content_type_guess)."""
+    consensus_blocks: list[dict] = []
+    for rank, cb in enumerate(result.consensus_blocks[:top_n], start=1):
+        text_slice = result.decoded_text[
+            cb.position * result.block_size : (cb.position + 1) * result.block_size
+        ]
+        consensus_blocks.append({
+            "rank": rank,
+            "position": cb.position,
+            "block_id": cb.block_id,
+            "count": cb.count,
+            "coverage_pct": round(cb.coverage_pct, 2),
+            "text_preview": text_slice,
+            "truncated": len(text_slice) >= result.block_size,
+            "content_type_guess": classify_content(text_slice),
+        })
+    return {
+        "prefix_length_blocks": result.prefix_length_blocks,
+        "prefix_length_chars": result.prefix_length_chars,
+        "min_count_threshold": result.min_count_threshold,
+        "consensus_blocks": consensus_blocks,
+        "decoded_text_preview": result.decoded_text[:preview_chars],
+        "block_size": result.block_size,
+        "total_records": result.total_records,
+    }
+
+
+def build_app_section_4(
+    filtered_jsonl: Path | str,
+    *,
+    block_size: int,
+    common_prefix_dir: Path | str,
+    min_count: int = DEFAULT_APP_COMMON_PREFIX_MIN_COUNT,
+    top_n: int = DEFAULT_APP_CONSENSUS_TOP_N,
+) -> dict:
+    """Assemble ``section_4_content`` for an APP report.
+
+    ``app_consensus`` is ``None`` when the filtered subset is empty or
+    has no consensus prefix at the chosen ``min_count``. ``model_overlap``
+    is ``None`` only when the model's ``coverage_profile.csv`` is
+    unavailable; if the model has consensus but the APP doesn't, the
+    overlap dict is still produced (with zero-shared metrics).
+    """
+    common_prefix_dir = Path(common_prefix_dir)
+    result = compute_app_common_prefix(
+        filtered_jsonl, block_size=block_size, min_count=min_count
+    )
+
+    if result is None or not result.consensus_blocks:
+        app_consensus: dict | None = None
+        app_block_ids: set[str] = set()
+    else:
+        app_consensus = _consensus_result_to_section_dict(result, top_n=top_n)
+        app_block_ids = {str(cb.block_id) for cb in result.consensus_blocks}
+
+    model_block_ids = read_model_consensus_block_ids(
+        common_prefix_dir / "coverage_profile.csv"
+    )
+    if model_block_ids is None:
+        model_overlap: dict | None = None
+    else:
+        model_overlap = compute_consensus_overlap(app_block_ids, model_block_ids)
+
+    return {"app_consensus": app_consensus, "model_overlap": model_overlap}

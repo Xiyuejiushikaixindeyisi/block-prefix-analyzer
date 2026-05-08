@@ -344,10 +344,45 @@ build_app_registry.py 末尾打印：
 
 | 指标 | 来源 | 备注 |
 |---|---|---|
-| 该 APP 的 common_prefix consensus blocks | common_prefix 重算（限定 user_id 过滤后的子集） | **核心叙事**：揭示该 APP 的业务模式 |
-| 共识 prefix 长度（blocks / chars） | 同上 | |
-| `content_type_guess`（8 类） | 复用 Phase 1 推断逻辑 | json_schema / system_prompt / agent_tool_prompt 等 |
-| 与模型整体 common_prefix 是否重叠 | 简单交集统计 | 揭示该 APP 是否使用通用 system prompt |
+| 该 APP 的 common_prefix consensus blocks | per-APP `find_common_prefix`（**`min_count=2`**）| **核心叙事**：揭示该 APP 的业务模式 |
+| 共识 prefix 长度（blocks / chars）| `result.prefix_length_blocks` / `prefix_length_chars` | top-N=20 inline，与模型报告同 schema |
+| `content_type_guess`（8 类）| 复用 `analysis.content_classifier.classify_content` | json_schema / system_prompt / agent_tool_prompt 等 |
+| 与模型整体 common_prefix 是否重叠 | 模型 `coverage_profile.csv` 全 block_id 集合 ∩ per-APP 共识 block_id | 揭示该 APP 是否使用通用 system prompt |
+
+> **min_count = 2**：模型级用 `min_count=10`（每位置至少 10 请求共享）。per-APP 请求量小，
+> 沿用 10 会导致大量小 APP 直接空 consensus；改 `min_count=2` 让 ≥2 共享即算共识。
+> 1-request APP 自动空 consensus（每 position count=1，过不了 2）。
+>
+> **重叠语义按 unique block_id**：交集是 `set(app_block_ids) ∩ set(model_block_ids)`（不是位置交集）。
+> 典型非周期 prompt 下两种解释结果一致；只有病态周期内容会让"位置数"与"unique 数"分离，
+> 此时 `consensus_blocks` 列表保留位置粒度细节供检查。
+>
+> **`section_4_content` JSON 形状**：
+> ```jsonc
+> {
+>   "app_consensus": {
+>     "prefix_length_blocks": int,       // 位置数 = len(consensus_blocks)
+>     "prefix_length_chars": int,
+>     "min_count_threshold": int,        // 默认 2
+>     "consensus_blocks": [              // top-20 inline，与模型报告同 schema
+>       { rank, position, block_id, count, coverage_pct, text_preview, truncated, content_type_guess }
+>     ],
+>     "decoded_text_preview": str,       // 前 500 字符
+>     "block_size": int,
+>     "total_records": int
+>   } | null,
+>   "model_overlap": {
+>     "model_unique_block_count": int,   // unique block_ids
+>     "app_unique_block_count": int,     // unique block_ids
+>     "shared_block_count": int,
+>     "overlap_ratio_app": float,        // shared / app_unique
+>     "overlap_ratio_model": float       // shared / model_unique
+>   } | null
+> }
+> ```
+>
+> `app_consensus = null` 当 APP 子集为空或无共识；`model_overlap = null` 当模型
+> `coverage_profile.csv` 缺失。两者独立判定，不互锁。
 
 ### 5.5 相对位置卡片（顶部摘要）
 

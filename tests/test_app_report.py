@@ -537,3 +537,69 @@ def test_section_3_no_model_f13_dir_baseline_is_null(tmp_path: Path) -> None:
     assert section is not None
     assert section["app_f13"] is not None
     assert section["model_baseline"] is None
+
+
+# ---------------------------------------------------------------------------
+# Step 4e — section_4 wiring
+# ---------------------------------------------------------------------------
+
+def test_section_4_remains_none_without_filtered_jsonl(tmp_path: Path) -> None:
+    report = assemble_app_report(
+        model_id="m", app_id="com.x", outputs_dir=tmp_path, history=[_entry()],
+    )
+    assert report["section_4_content"] is None
+
+
+def test_section_4_populated_when_filtered_jsonl_provided(tmp_path: Path) -> None:
+    outputs_dir = tmp_path / "outputs"
+    cp_dir = outputs_dir / "common_prefix"
+    cp_dir.mkdir(parents=True)
+    # Anchor block_size=16 so the per-APP common_prefix scan splits the
+    # short fixture prompts into multiple blocks.
+    _write_meta(outputs_dir / "traffic_pattern" / "metadata.json", {"block_size": 16})
+    _write_csv_rows(
+        cp_dir / "coverage_profile.csv",
+        ["position", "block_id", "count", "coverage_pct"],
+        [[0, "9999", 50, 99.0], [1, "8888", 50, 99.0]],
+    )
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0,
+         "raw_prompt": "abc" * 50},
+        {"user_id": "com.x", "request_id": "r2", "timestamp": 1.0,
+         "raw_prompt": "abc" * 50},
+    ])
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x")],
+        filtered_jsonl=filtered,
+    )
+    section = report["section_4_content"]
+    assert section is not None
+    assert section["app_consensus"]["prefix_length_blocks"] == 9
+    assert section["app_consensus"]["min_count_threshold"] == 2
+    assert section["model_overlap"]["model_unique_block_count"] == 2
+    assert section["model_overlap"]["shared_block_count"] == 0
+
+
+def test_section_4_no_model_common_prefix_dir_yields_no_overlap(tmp_path: Path) -> None:
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0,
+         "raw_prompt": "abc" * 50},
+        {"user_id": "com.x", "request_id": "r2", "timestamp": 1.0,
+         "raw_prompt": "abc" * 50},
+    ])
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x")],
+        filtered_jsonl=filtered,
+    )
+    section = report["section_4_content"]
+    assert section is not None
+    assert section["app_consensus"] is not None
+    assert section["model_overlap"] is None

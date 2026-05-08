@@ -17,12 +17,16 @@ from block_prefix_analyzer.reports.app_compute import (
     build_app_section_1,
     build_app_section_2,
     build_app_section_3,
+    build_app_section_4,
+    compute_app_common_prefix,
     compute_app_f4,
     compute_app_f13,
     compute_app_traffic,
+    compute_consensus_overlap,
     compute_peak_alignment,
     read_cross_app_user_hit_distribution,
     read_model_baseline,
+    read_model_consensus_block_ids,
     read_model_f13_baseline,
     read_model_volume_bins,
 )
@@ -610,3 +614,244 @@ def test_build_app_section_3_empty_filter_yields_both_none(tmp_path: Path) -> No
     section = build_app_section_3(filtered, block_size=16, f13_dir=tmp_path / "nope")
     assert section["app_f13"] is None
     assert section["model_baseline"] is None
+
+
+# ---------------------------------------------------------------------------
+# Section D (Step 4e) — system prompt consensus + model overlap
+# ---------------------------------------------------------------------------
+
+def test_compute_app_common_prefix_basic_with_shared_prompt(tmp_path: Path) -> None:
+    """Three requests share the same long prefix (first ~144 chars)."""
+    src = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50 + "xxxxx"),
+        _row("com.app", "r2", 1.0, "abc" * 50 + "yyyyy"),
+        _row("com.app", "r3", 2.0, "abc" * 50 + "zzzzz"),
+    ])
+    result = compute_app_common_prefix(src, block_size=16, min_count=2)
+    assert result is not None
+    # 9 full blocks of "abc" * 50 = 144 chars are shared by all 3 requests.
+    assert result.prefix_length_blocks == 9
+    assert result.prefix_length_chars == 144
+    assert all(cb.count == 3 for cb in result.consensus_blocks)
+    assert "abcabc" in result.decoded_text
+
+
+def test_compute_app_common_prefix_returns_none_for_empty_jsonl(tmp_path: Path) -> None:
+    src = tmp_path / "empty.jsonl"
+    src.write_text("", encoding="utf-8")
+    assert compute_app_common_prefix(src, block_size=16) is None
+
+
+def test_compute_app_common_prefix_single_record_yields_empty_consensus(
+    tmp_path: Path,
+) -> None:
+    """1 request → all positions have count=1 → min_count=2 filters all."""
+    src = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50),
+    ])
+    result = compute_app_common_prefix(src, block_size=16, min_count=2)
+    assert result is not None
+    assert result.consensus_blocks == []
+    assert result.prefix_length_blocks == 0
+
+
+def test_compute_app_common_prefix_no_overlap_yields_empty_consensus(
+    tmp_path: Path,
+) -> None:
+    src = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50),
+        _row("com.app", "r2", 1.0, "xyz" * 50),
+    ])
+    result = compute_app_common_prefix(src, block_size=16, min_count=2)
+    assert result is not None
+    assert result.consensus_blocks == []
+
+
+def test_compute_app_common_prefix_min_count_threshold_respected(tmp_path: Path) -> None:
+    """min_count=3 rejects a block shared by only 2 of 3 requests."""
+    src = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50 + "xxxxx"),
+        _row("com.app", "r2", 1.0, "abc" * 50 + "yyyyy"),
+        _row("com.app", "r3", 2.0, "different" * 20),
+    ])
+    result_loose = compute_app_common_prefix(src, block_size=16, min_count=2)
+    assert result_loose is not None
+    assert result_loose.prefix_length_blocks == 9
+    result_strict = compute_app_common_prefix(src, block_size=16, min_count=3)
+    assert result_strict is not None
+    assert result_strict.consensus_blocks == []
+
+
+# read_model_consensus_block_ids ---------------------------------------------
+
+def test_read_model_consensus_block_ids_basic(tmp_path: Path) -> None:
+    csv_path = tmp_path / "coverage_profile.csv"
+    _write_csv(csv_path,
+               ["position", "block_id", "count", "coverage_pct"],
+               [[0, "111", 100, 99.0], [1, "222", 80, 80.0]])
+    out = read_model_consensus_block_ids(csv_path)
+    assert out == {"111", "222"}
+
+
+def test_read_model_consensus_block_ids_missing_file(tmp_path: Path) -> None:
+    assert read_model_consensus_block_ids(tmp_path / "missing.csv") is None
+
+
+def test_read_model_consensus_block_ids_empty_file_returns_none(tmp_path: Path) -> None:
+    csv_path = tmp_path / "empty.csv"
+    csv_path.write_text("position,block_id,count,coverage_pct\n", encoding="utf-8")
+    assert read_model_consensus_block_ids(csv_path) is None
+
+
+def test_read_model_consensus_block_ids_skips_blank_block_ids(tmp_path: Path) -> None:
+    csv_path = tmp_path / "coverage.csv"
+    _write_csv(csv_path,
+               ["position", "block_id", "count", "coverage_pct"],
+               [[0, "111", 100, 99.0], [1, "", 80, 80.0]])
+    assert read_model_consensus_block_ids(csv_path) == {"111"}
+
+
+# compute_consensus_overlap --------------------------------------------------
+
+def test_consensus_overlap_full() -> None:
+    out = compute_consensus_overlap({"a", "b", "c"}, {"a", "b", "c", "d"})
+    assert out["shared_block_count"] == 3
+    assert out["app_unique_block_count"] == 3
+    assert out["model_unique_block_count"] == 4
+    assert out["overlap_ratio_app"] == pytest.approx(1.0)
+    assert out["overlap_ratio_model"] == pytest.approx(0.75)
+
+
+def test_consensus_overlap_disjoint() -> None:
+    out = compute_consensus_overlap({"a", "b"}, {"c", "d"})
+    assert out["shared_block_count"] == 0
+    assert out["overlap_ratio_app"] == 0.0
+    assert out["overlap_ratio_model"] == 0.0
+
+
+def test_consensus_overlap_partial() -> None:
+    out = compute_consensus_overlap({"a", "b", "c"}, {"b", "c", "d", "e"})
+    assert out["shared_block_count"] == 2
+    assert out["overlap_ratio_app"] == pytest.approx(2 / 3)
+    assert out["overlap_ratio_model"] == pytest.approx(0.5)
+
+
+def test_consensus_overlap_empty_app_side() -> None:
+    out = compute_consensus_overlap(set(), {"a", "b"})
+    assert out["shared_block_count"] == 0
+    assert out["overlap_ratio_app"] == 0.0
+    assert out["overlap_ratio_model"] == 0.0
+
+
+def test_consensus_overlap_empty_model_side() -> None:
+    out = compute_consensus_overlap({"a"}, set())
+    assert out["shared_block_count"] == 0
+    assert out["overlap_ratio_app"] == 0.0
+    assert out["overlap_ratio_model"] == 0.0
+
+
+# build_app_section_4 --------------------------------------------------------
+
+def test_build_app_section_4_basic(tmp_path: Path) -> None:
+    """End-to-end: per-APP consensus computed, model overlap measured."""
+    filtered = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50 + "xxxxx"),
+        _row("com.app", "r2", 1.0, "abc" * 50 + "yyyyy"),
+    ])
+    cp_dir = tmp_path / "common_prefix"
+    cp_dir.mkdir()
+    _write_csv(
+        cp_dir / "coverage_profile.csv",
+        ["position", "block_id", "count", "coverage_pct"],
+        [[0, "9999", 50, 99.0], [1, "8888", 50, 99.0]],
+    )
+    section = build_app_section_4(filtered, block_size=16, common_prefix_dir=cp_dir)
+    assert section["app_consensus"] is not None
+    assert section["app_consensus"]["prefix_length_blocks"] == 9
+    assert section["app_consensus"]["min_count_threshold"] == 2
+    assert len(section["app_consensus"]["consensus_blocks"]) == 9
+    first = section["app_consensus"]["consensus_blocks"][0]
+    assert first["rank"] == 1
+    assert first["position"] == 0
+    assert "abc" in first["text_preview"]
+    assert "content_type_guess" in first
+    overlap = section["model_overlap"]
+    assert overlap is not None
+    # "abc" * 50 produces periodic 16-char windows (period = 3), so the 9
+    # consensus positions reference only 3 unique block_ids.
+    assert overlap["app_unique_block_count"] == 3
+    assert overlap["model_unique_block_count"] == 2
+    assert overlap["shared_block_count"] == 0
+    assert overlap["overlap_ratio_app"] == 0.0
+
+
+def test_build_app_section_4_no_app_consensus_but_model_present(tmp_path: Path) -> None:
+    """1-request APP → no consensus; model overlap still reported (zeros)."""
+    filtered = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50),
+    ])
+    cp_dir = tmp_path / "common_prefix"
+    cp_dir.mkdir()
+    _write_csv(
+        cp_dir / "coverage_profile.csv",
+        ["position", "block_id", "count", "coverage_pct"],
+        [[0, "9999", 50, 99.0]],
+    )
+    section = build_app_section_4(filtered, block_size=16, common_prefix_dir=cp_dir)
+    assert section["app_consensus"] is None
+    assert section["model_overlap"] is not None
+    assert section["model_overlap"]["app_unique_block_count"] == 0
+    assert section["model_overlap"]["model_unique_block_count"] == 1
+    assert section["model_overlap"]["shared_block_count"] == 0
+
+
+def test_build_app_section_4_no_model_dir_yields_no_overlap(tmp_path: Path) -> None:
+    filtered = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, "abc" * 50),
+        _row("com.app", "r2", 1.0, "abc" * 50),
+    ])
+    section = build_app_section_4(
+        filtered, block_size=16, common_prefix_dir=tmp_path / "missing"
+    )
+    assert section["app_consensus"] is not None
+    assert section["model_overlap"] is None
+
+
+def test_build_app_section_4_top_n_caps_consensus_blocks_list(tmp_path: Path) -> None:
+    """25-block prefix → top_n=20 caps the displayed list."""
+    long_prompt = "ab" * 200   # 400 chars / 16 = 25 full blocks
+    filtered = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, long_prompt),
+        _row("com.app", "r2", 1.0, long_prompt),
+    ])
+    section = build_app_section_4(
+        filtered, block_size=16, common_prefix_dir=tmp_path / "nope", top_n=20
+    )
+    assert section["app_consensus"]["prefix_length_blocks"] == 25
+    assert len(section["app_consensus"]["consensus_blocks"]) == 20
+
+
+def test_build_app_section_4_decoded_text_preview_capped_at_500_chars(
+    tmp_path: Path,
+) -> None:
+    long_prompt = "ab" * 1000
+    filtered = _write_business_jsonl(tmp_path, [
+        _row("com.app", "r1", 0.0, long_prompt),
+        _row("com.app", "r2", 1.0, long_prompt),
+    ])
+    section = build_app_section_4(
+        filtered, block_size=16, common_prefix_dir=tmp_path / "nope"
+    )
+    preview = section["app_consensus"]["decoded_text_preview"]
+    assert len(preview) == 500
+    assert preview.startswith("ab")
+
+
+def test_build_app_section_4_empty_filter_yields_both_none(tmp_path: Path) -> None:
+    filtered = tmp_path / "empty.jsonl"
+    filtered.write_text("", encoding="utf-8")
+    section = build_app_section_4(
+        filtered, block_size=16, common_prefix_dir=tmp_path / "nope"
+    )
+    assert section["app_consensus"] is None
+    assert section["model_overlap"] is None
