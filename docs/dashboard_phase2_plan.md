@@ -386,20 +386,43 @@ build_app_registry.py 末尾打印：
 
 ### 5.5 相对位置卡片（顶部摘要）
 
-报告头部一张卡片，给出该 APP 在同模型内的相对定位（口径统一 block_size = 128）：
+报告**顶层** `relative_position` 字段（与 5 个 section 平级，**model 报告无此字段**），
+派生自 sections 1/2/4 + scope.app_history + 模型已有产物。每个子字段独立判定，
+源数据缺失时该子字段 = `null`，但 `relative_position` 容器自身永远不为 `null`（
+即使所有子字段都 null，也返回完整 5-key 字典）。
 
-- 请求量百分位（top X%，基于 `e1b_skewness` per-user 数据派生）
-- ideal hit rate vs 同模型 APP 中位（差距 ±Y pp）
-- 共识 prefix 长度 vs 同模型平均
-- 流量是否集中在高峰时段（路由价值标签：高 / 中 / 低）
-- **申报模型一致性**：
-  - 一致 ✓：`app_history` 中存在任一 `declared_model` 与当前 `model_id` 名称对齐（启发式匹配，如 `Qwen-V3-32B` ↔ `qwen_v3_32b_*`）
-  - 不一致 ⚠：所有历史申报模型均与当前部署模型不匹配
-  - 多模型申请：展示完整 `app_history` 表格（`source_meeting_date | declared_model`）
+| 子字段 | 来源 | 含义 |
+|---|---|---|
+| `request_volume` | `e1_user_hit_rate/user_hit_bs<bs>.csv` 的 `request_count` 列 + `filter_stats.kept_count`（优先）或 `section_2.app_traffic.total_requests`（fallback）| 该 APP 的请求量在同模型 APP 分布中的位置 |
+| `hit_rate` | `section_1.app_f4.ideal_hit_ratio` vs `section_1.user_hit_distribution.stats.{p50,p90}` | 该 APP 命中率与模型中位/p90 的差距 |
+| `consensus_prefix_length` | `section_4.app_consensus.prefix_length_*` vs `common_prefix/metadata.json` 的 `prefix_length_*` | 该 APP 共识 prefix 长度 vs 模型整体 |
+| `peak_alignment` | `section_2.peak_alignment.peak_alignment_ratio` 映射到 高/中/低 标签 | 流量集中在模型高峰时段的程度 |
+| `declared_model_consistency` | `scope.app_history` × `scope.model_id`（用 `match_declared_to_deployment` 启发式）| 任一历史申报模型匹配 → `is_consistent=true`；多模型时全列 |
 
-> 启发式匹配的规则（小写 + 去分隔符 + 子串匹配）在实施时落到
-> `app_registry.match_declared_to_deployment(declared, model_id) -> bool`，
-> 留有可单测的边界。
+> **`peak_alignment` 标签阈值**：`ratio ≥ 0.30 → high`、`0.10 ≤ ratio < 0.30 → medium`、
+> `ratio < 0.10 → low`。基线 0.10 = 均匀分布下的期望值（10% bins → 10% requests）；
+> 0.30 = 显著高于基线 3×；阈值落到代码常量
+> `app_compute.PEAK_ALIGNMENT_HIGH_THRESHOLD` / `LOW_THRESHOLD`，并 inline 写到
+> `peak_alignment.thresholds` 子字典里供 provenance。
+>
+> **`request_volume.percentile_rank`** ∈ [0, 1]：1.0 = 该 APP 是请求量最高的，
+> 0.0 = 最低；附带 `top_pct = (1 - rank) × 100` 方便渲染层显示 "top X%"。
+> 算法用 `bisect.bisect_right` 计算"≤ 该 APP 计数的用户数 / 总用户数"。
+>
+> **`declared_model_consistency = null`** 当 unregistered APP（`app_history=[]`）
+> 或 model_id 缺失。否则展开为 `{is_consistent, matched_declared_models,
+> unmatched_declared_models, model_id}`，UI 可一并显示完整匹配/不匹配列表。
+>
+> **`relative_position` JSON 形状**：
+> ```jsonc
+> {
+>   "request_volume": { this_app_request_count, model_user_count, percentile_rank, top_pct } | null,
+>   "hit_rate": { this_app, model_median, model_p90, delta_pp } | null,
+>   "consensus_prefix_length": { this_app_chars, this_app_blocks, model_chars, model_blocks } | null,
+>   "peak_alignment": { ratio, label, thresholds: { high_min, low_max } } | null,
+>   "declared_model_consistency": { is_consistent, matched_declared_models, unmatched_declared_models, model_id } | null
+> }
+> ```
 
 ---
 

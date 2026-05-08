@@ -49,6 +49,7 @@ from block_prefix_analyzer.reports.app_compute import (
     build_app_section_2,
     build_app_section_3,
     build_app_section_4,
+    build_relative_position,
 )
 from block_prefix_analyzer.reports.app_filter import FilterStats
 from block_prefix_analyzer.reports.app_registry import AppRegistryEntry
@@ -217,8 +218,9 @@ def assemble_app_report(
     section_2: dict | None = None
     section_3: dict | None = None
     section_4: dict | None = None
+    relative_position: dict | None = None
+    effective_block_size = block_size or DEFAULT_BLOCK_SIZE_FALLBACK
     if filtered_jsonl is not None:
-        effective_block_size = block_size or DEFAULT_BLOCK_SIZE_FALLBACK
         section_1 = build_app_section_1(
             filtered_jsonl=filtered_jsonl,
             block_size=effective_block_size,
@@ -241,12 +243,30 @@ def assemble_app_report(
             common_prefix_dir=outputs_dir / "common_prefix",
         )
 
+    scope = _build_scope(model_id, app_id, history)
+    if filtered_jsonl is not None:
+        this_app_request_count: int | None = (
+            filter_stats.kept_count if filter_stats is not None
+            else (section_2.get("app_traffic", {}) or {}).get("total_requests")
+            if section_2 else None
+        )
+        relative_position = build_relative_position(
+            scope=scope,
+            section_1=section_1,
+            section_2=section_2,
+            section_4=section_4,
+            outputs_dir=outputs_dir,
+            block_size=effective_block_size,
+            this_app_request_count=this_app_request_count,
+        )
+
     return {
         "schema_version": SCHEMA_VERSION,
-        "scope": _build_scope(model_id, app_id, history),
+        "scope": scope,
         "meta": _build_meta(
             model_id, app_id, block_size, input_file, filter_stats, section_2
         ),
+        "relative_position": relative_position,
         "section_1_ideal_hit": section_1,
         "section_2_traffic": section_2,
         "section_3_locality": section_3,

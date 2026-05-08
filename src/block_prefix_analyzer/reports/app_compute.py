@@ -44,11 +44,15 @@ from block_prefix_analyzer.analysis.traffic_pattern import (
 )
 from block_prefix_analyzer.io.business_loader import load_business_jsonl
 from block_prefix_analyzer.replay import replay
+from block_prefix_analyzer.reports.app_registry import match_declared_to_deployment
 from block_prefix_analyzer.reports.stats import (
     f13_cdf_percentiles,
     percentile,
     user_hit_distribution,
 )
+
+PEAK_ALIGNMENT_HIGH_THRESHOLD: float = 0.30
+PEAK_ALIGNMENT_LOW_THRESHOLD: float = 0.10
 
 DEFAULT_APP_COMMON_PREFIX_MIN_COUNT: int = 2
 DEFAULT_APP_CONSENSUS_TOP_N: int = 20
@@ -547,3 +551,179 @@ def build_app_section_4(
         model_overlap = compute_consensus_overlap(app_block_ids, model_block_ids)
 
     return {"app_consensus": app_consensus, "model_overlap": model_overlap}
+
+
+# ---------------------------------------------------------------------------
+# Step 4f — relative-position summary card (top of report)
+# ---------------------------------------------------------------------------
+
+def _request_volume_percentile(
+    e1_csv_path: Path | str, this_app_request_count: int | None
+) -> dict | None:
+    """Where does this APP sit in the per-user request_count distribution?
+
+    Reads the ``request_count`` column from
+    ``e1_user_hit_rate/user_hit_bs<bs>.csv`` (rows are anonymous but we
+    only need the distribution shape). Returns the empirical percentile
+    rank (1.0 = highest volume, 0.0 = lowest) plus the convenience
+    ``top_pct`` = (1 - rank) * 100 for renderer display.
+    """
+    if this_app_request_count is None:
+        return None
+    e1_csv_path = Path(e1_csv_path)
+    if not e1_csv_path.exists():
+        return None
+    counts: list[int] = []
+    with e1_csv_path.open(encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                counts.append(int(row["request_count"]))
+            except (KeyError, ValueError):
+                continue
+    if not counts:
+        return None
+    counts_sorted = sorted(counts)
+    # bisect_right counts entries strictly less than or equal to threshold;
+    # divide by N to get a rank in [0, 1] where 1.0 = highest volume.
+    import bisect
+    idx = bisect.bisect_right(counts_sorted, this_app_request_count)
+    rank = idx / len(counts_sorted)
+    return {
+        "this_app_request_count": this_app_request_count,
+        "model_user_count": len(counts_sorted),
+        "percentile_rank": rank,
+        "top_pct": round((1.0 - rank) * 100, 2),
+    }
+
+
+def _hit_rate_position(section_1: dict | None) -> dict | None:
+    if section_1 is None:
+        return None
+    app_f4 = section_1.get("app_f4")
+    user_dist = section_1.get("user_hit_distribution")
+    if app_f4 is None or user_dist is None:
+        return None
+    this_app = app_f4.get("ideal_hit_ratio")
+    median = (user_dist.get("stats") or {}).get("p50")
+    p90 = (user_dist.get("stats") or {}).get("p90")
+    if this_app is None or median is None:
+        return None
+    return {
+        "this_app": this_app,
+        "model_median": median,
+        "model_p90": p90,
+        "delta_pp": (this_app - median) * 100.0,
+    }
+
+
+def _consensus_prefix_position(
+    section_4: dict | None, common_prefix_metadata_path: Path | str
+) -> dict | None:
+    if section_4 is None:
+        return None
+    app_consensus = section_4.get("app_consensus") or {}
+    this_app_chars = app_consensus.get("prefix_length_chars")
+    this_app_blocks = app_consensus.get("prefix_length_blocks")
+
+    model_chars: int | None = None
+    model_blocks: int | None = None
+    p = Path(common_prefix_metadata_path)
+    if p.exists():
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            model_chars = data.get("prefix_length_chars")
+            model_blocks = data.get("prefix_length_blocks")
+        except json.JSONDecodeError:
+            pass
+
+    if this_app_chars is None and model_chars is None:
+        return None
+    return {
+        "this_app_chars": this_app_chars,
+        "this_app_blocks": this_app_blocks,
+        "model_chars": model_chars,
+        "model_blocks": model_blocks,
+    }
+
+
+def _peak_alignment_label(section_2: dict | None) -> dict | None:
+    if section_2 is None:
+        return None
+    pa = section_2.get("peak_alignment")
+    if pa is None:
+        return None
+    ratio = pa.get("peak_alignment_ratio")
+    if ratio is None:
+        return None
+    if ratio >= PEAK_ALIGNMENT_HIGH_THRESHOLD:
+        label = "high"
+    elif ratio >= PEAK_ALIGNMENT_LOW_THRESHOLD:
+        label = "medium"
+    else:
+        label = "low"
+    return {
+        "ratio": ratio,
+        "label": label,
+        "thresholds": {
+            "high_min": PEAK_ALIGNMENT_HIGH_THRESHOLD,
+            "low_max": PEAK_ALIGNMENT_LOW_THRESHOLD,
+        },
+    }
+
+
+def _declared_model_consistency(
+    history: list[dict] | None, model_id: str | None
+) -> dict | None:
+    if not history or not model_id:
+        return None
+    matched: list[str] = []
+    unmatched: list[str] = []
+    for entry in history:
+        declared = (entry.get("declared_model") or "").strip()
+        if not declared:
+            continue
+        if match_declared_to_deployment(declared, model_id):
+            matched.append(declared)
+        else:
+            unmatched.append(declared)
+    return {
+        "is_consistent": bool(matched),
+        "matched_declared_models": matched,
+        "unmatched_declared_models": unmatched,
+        "model_id": model_id,
+    }
+
+
+def build_relative_position(
+    *,
+    scope: dict,
+    section_1: dict | None,
+    section_2: dict | None,
+    section_4: dict | None,
+    outputs_dir: Path | str,
+    block_size: int,
+    this_app_request_count: int | None,
+) -> dict:
+    """Assemble the top-level ``relative_position`` summary card.
+
+    All five sub-fields are computed independently and may be ``None``
+    when their underlying data is unavailable. The card is always
+    returned (never ``None`` itself) so the dashboard renderer can rely
+    on a stable container shape.
+    """
+    outputs_dir = Path(outputs_dir)
+    return {
+        "request_volume": _request_volume_percentile(
+            outputs_dir / "e1_user_hit_rate" / f"user_hit_bs{block_size}.csv",
+            this_app_request_count=this_app_request_count,
+        ),
+        "hit_rate": _hit_rate_position(section_1),
+        "consensus_prefix_length": _consensus_prefix_position(
+            section_4, outputs_dir / "common_prefix" / "metadata.json"
+        ),
+        "peak_alignment": _peak_alignment_label(section_2),
+        "declared_model_consistency": _declared_model_consistency(
+            scope.get("app_history"), scope.get("model_id")
+        ),
+    }

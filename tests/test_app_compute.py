@@ -14,10 +14,13 @@ from pathlib import Path
 import pytest
 
 from block_prefix_analyzer.reports.app_compute import (
+    PEAK_ALIGNMENT_HIGH_THRESHOLD,
+    PEAK_ALIGNMENT_LOW_THRESHOLD,
     build_app_section_1,
     build_app_section_2,
     build_app_section_3,
     build_app_section_4,
+    build_relative_position,
     compute_app_common_prefix,
     compute_app_f4,
     compute_app_f13,
@@ -855,3 +858,266 @@ def test_build_app_section_4_empty_filter_yields_both_none(tmp_path: Path) -> No
     )
     assert section["app_consensus"] is None
     assert section["model_overlap"] is None
+
+
+# ---------------------------------------------------------------------------
+# Step 4f — relative_position summary card
+# ---------------------------------------------------------------------------
+
+def _make_e1_csv(tmp_path: Path, request_counts: list[int], block_size: int = 128) -> Path:
+    e1_dir = tmp_path / "e1_user_hit_rate"
+    e1_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = e1_dir / f"user_hit_bs{block_size}.csv"
+    rows = [[i + 1, 0.5, 1, 1, c] for i, c in enumerate(request_counts)]
+    _write_csv(csv_path, ["rank", "hit_rate", "prefix_reuse_blocks",
+                          "total_blocks", "request_count"], rows)
+    return csv_path
+
+
+def test_relative_position_request_volume_top_user(tmp_path: Path) -> None:
+    """This APP has the most requests of any user → top_pct ≈ 0."""
+    _make_e1_csv(tmp_path, [10, 20, 30, 40, 100])
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=None, section_2=None, section_4=None,
+        outputs_dir=tmp_path,
+        block_size=128,
+        this_app_request_count=100,
+    )
+    rv = rp["request_volume"]
+    assert rv is not None
+    assert rv["this_app_request_count"] == 100
+    assert rv["model_user_count"] == 5
+    assert rv["percentile_rank"] == pytest.approx(1.0)
+    assert rv["top_pct"] == pytest.approx(0.0)
+
+
+def test_relative_position_request_volume_median_user(tmp_path: Path) -> None:
+    """Sorted [10,20,30,40,100]. this_app = 30 → 3 of 5 ≤ 30 → rank = 0.6."""
+    _make_e1_csv(tmp_path, [10, 20, 30, 40, 100])
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=None, section_2=None, section_4=None,
+        outputs_dir=tmp_path,
+        block_size=128,
+        this_app_request_count=30,
+    )
+    assert rp["request_volume"]["percentile_rank"] == pytest.approx(0.6)
+    assert rp["request_volume"]["top_pct"] == pytest.approx(40.0)
+
+
+def test_relative_position_request_volume_no_csv(tmp_path: Path) -> None:
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=None, section_2=None, section_4=None,
+        outputs_dir=tmp_path,
+        block_size=128,
+        this_app_request_count=42,
+    )
+    assert rp["request_volume"] is None
+
+
+def test_relative_position_request_volume_unknown_count(tmp_path: Path) -> None:
+    _make_e1_csv(tmp_path, [10, 20])
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=None, section_2=None, section_4=None,
+        outputs_dir=tmp_path,
+        block_size=128,
+        this_app_request_count=None,
+    )
+    assert rp["request_volume"] is None
+
+
+def test_relative_position_hit_rate_computes_delta(tmp_path: Path) -> None:
+    section_1 = {
+        "app_f4": {"ideal_hit_ratio": 0.78},
+        "user_hit_distribution": {"stats": {"p50": 0.65, "p90": 0.92}},
+    }
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=section_1, section_2=None, section_4=None,
+        outputs_dir=tmp_path,
+        block_size=128,
+        this_app_request_count=None,
+    )
+    hr = rp["hit_rate"]
+    assert hr is not None
+    assert hr["this_app"] == 0.78
+    assert hr["model_median"] == 0.65
+    assert hr["model_p90"] == 0.92
+    assert hr["delta_pp"] == pytest.approx(13.0)
+
+
+def test_relative_position_hit_rate_none_when_section1_missing(tmp_path: Path) -> None:
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=None, section_2=None, section_4=None,
+        outputs_dir=tmp_path, block_size=128, this_app_request_count=None,
+    )
+    assert rp["hit_rate"] is None
+
+
+def test_relative_position_hit_rate_none_when_inner_dicts_null(tmp_path: Path) -> None:
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1={"app_f4": None, "user_hit_distribution": None},
+        section_2=None, section_4=None,
+        outputs_dir=tmp_path, block_size=128, this_app_request_count=None,
+    )
+    assert rp["hit_rate"] is None
+
+
+def test_relative_position_consensus_prefix_compares_with_model(tmp_path: Path) -> None:
+    cp_dir = tmp_path / "common_prefix"
+    cp_dir.mkdir()
+    (cp_dir / "metadata.json").write_text(
+        json.dumps({"prefix_length_blocks": 50, "prefix_length_chars": 6400}),
+        encoding="utf-8",
+    )
+    section_4 = {"app_consensus": {"prefix_length_blocks": 9, "prefix_length_chars": 144}}
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=None, section_2=None, section_4=section_4,
+        outputs_dir=tmp_path,
+        block_size=128,
+        this_app_request_count=None,
+    )
+    cp = rp["consensus_prefix_length"]
+    assert cp == {
+        "this_app_chars": 144,
+        "this_app_blocks": 9,
+        "model_chars": 6400,
+        "model_blocks": 50,
+    }
+
+
+def test_relative_position_consensus_prefix_handles_missing_app_or_model(
+    tmp_path: Path,
+) -> None:
+    """No model metadata + null app_consensus → field is None."""
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=None, section_2=None,
+        section_4={"app_consensus": None},
+        outputs_dir=tmp_path,
+        block_size=128, this_app_request_count=None,
+    )
+    assert rp["consensus_prefix_length"] is None
+
+
+@pytest.mark.parametrize("ratio,expected_label", [
+    (0.50, "high"),
+    (0.30, "high"),     # boundary inclusive
+    (0.29, "medium"),
+    (0.10, "medium"),   # boundary inclusive
+    (0.05, "low"),
+    (0.00, "low"),
+])
+def test_relative_position_peak_alignment_label_thresholds(
+    ratio: float, expected_label: str, tmp_path: Path,
+) -> None:
+    section_2 = {"peak_alignment": {"peak_alignment_ratio": ratio}}
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=None, section_2=section_2, section_4=None,
+        outputs_dir=tmp_path, block_size=128, this_app_request_count=None,
+    )
+    pa = rp["peak_alignment"]
+    assert pa is not None
+    assert pa["ratio"] == ratio
+    assert pa["label"] == expected_label
+    assert pa["thresholds"]["high_min"] == PEAK_ALIGNMENT_HIGH_THRESHOLD
+    assert pa["thresholds"]["low_max"] == PEAK_ALIGNMENT_LOW_THRESHOLD
+
+
+def test_relative_position_peak_alignment_none_when_section2_lacks_ratio(
+    tmp_path: Path,
+) -> None:
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=None, section_2={"peak_alignment": None}, section_4=None,
+        outputs_dir=tmp_path, block_size=128, this_app_request_count=None,
+    )
+    assert rp["peak_alignment"] is None
+
+
+def test_relative_position_declared_consistency_consistent_match(tmp_path: Path) -> None:
+    rp = build_relative_position(
+        scope={
+            "model_id": "qwen_v3_32b_8k",
+            "app_history": [
+                {"declared_model": "Qwen-V3-32B", "source_meeting_date": "2026-01-06"},
+            ],
+        },
+        section_1=None, section_2=None, section_4=None,
+        outputs_dir=tmp_path, block_size=128, this_app_request_count=None,
+    )
+    dmc = rp["declared_model_consistency"]
+    assert dmc["is_consistent"] is True
+    assert dmc["matched_declared_models"] == ["Qwen-V3-32B"]
+    assert dmc["unmatched_declared_models"] == []
+
+
+def test_relative_position_declared_consistency_partial_match(tmp_path: Path) -> None:
+    """Multi-application APP: any historical match → consistent=True; both
+    matched and unmatched lists are reported."""
+    rp = build_relative_position(
+        scope={
+            "model_id": "qwen_v3_32b_8k",
+            "app_history": [
+                {"declared_model": "GLM4.7", "source_meeting_date": "2026-01-06"},
+                {"declared_model": "Qwen-V3-32B", "source_meeting_date": "2026-03-10"},
+            ],
+        },
+        section_1=None, section_2=None, section_4=None,
+        outputs_dir=tmp_path, block_size=128, this_app_request_count=None,
+    )
+    dmc = rp["declared_model_consistency"]
+    assert dmc["is_consistent"] is True
+    assert dmc["matched_declared_models"] == ["Qwen-V3-32B"]
+    assert dmc["unmatched_declared_models"] == ["GLM4.7"]
+
+
+def test_relative_position_declared_consistency_no_match(tmp_path: Path) -> None:
+    rp = build_relative_position(
+        scope={
+            "model_id": "qwen_v3_32b_8k",
+            "app_history": [{"declared_model": "GLM4.7"}],
+        },
+        section_1=None, section_2=None, section_4=None,
+        outputs_dir=tmp_path, block_size=128, this_app_request_count=None,
+    )
+    dmc = rp["declared_model_consistency"]
+    assert dmc["is_consistent"] is False
+    assert dmc["matched_declared_models"] == []
+    assert dmc["unmatched_declared_models"] == ["GLM4.7"]
+
+
+def test_relative_position_declared_consistency_empty_history(tmp_path: Path) -> None:
+    """Unregistered APP → app_history=[] → consistency check returns None."""
+    rp = build_relative_position(
+        scope={"model_id": "m", "app_history": []},
+        section_1=None, section_2=None, section_4=None,
+        outputs_dir=tmp_path, block_size=128, this_app_request_count=None,
+    )
+    assert rp["declared_model_consistency"] is None
+
+
+def test_relative_position_returns_dict_even_when_all_subfields_null(
+    tmp_path: Path,
+) -> None:
+    """All inputs absent → dict with five null sub-fields (never None itself)."""
+    rp = build_relative_position(
+        scope={"model_id": None, "app_history": None},
+        section_1=None, section_2=None, section_4=None,
+        outputs_dir=tmp_path, block_size=128, this_app_request_count=None,
+    )
+    assert set(rp.keys()) == {
+        "request_volume",
+        "hit_rate",
+        "consensus_prefix_length",
+        "peak_alignment",
+        "declared_model_consistency",
+    }
+    assert all(v is None for v in rp.values())

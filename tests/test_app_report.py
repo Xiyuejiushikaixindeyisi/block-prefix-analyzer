@@ -75,8 +75,9 @@ def test_schema_version_is_v1_2(tmp_path: Path) -> None:
     assert SCHEMA_VERSION == "1.2"
 
 
-def test_top_level_keys_match_model_report(tmp_path: Path) -> None:
-    """App report keeps the same five-section outer shape as the model report."""
+def test_top_level_keys_extend_model_report_with_relative_position(tmp_path: Path) -> None:
+    """App report keeps the model report's outer shape and adds one
+    APP-only top-level key (``relative_position``)."""
     report = assemble_app_report(
         model_id="m", app_id="com.x", outputs_dir=tmp_path, history=[]
     )
@@ -84,15 +85,17 @@ def test_top_level_keys_match_model_report(tmp_path: Path) -> None:
         "schema_version",
         "scope",
         "meta",
+        "relative_position",
         "section_1_ideal_hit",
         "section_2_traffic",
         "section_3_locality",
         "section_4_content",
         "section_5_recommendations",
     }
-    # Skeleton: four content sections are placeholders.
+    # Skeleton: four content sections + relative_position are placeholders.
     for key in ("section_1_ideal_hit", "section_2_traffic",
-                "section_3_locality", "section_4_content"):
+                "section_3_locality", "section_4_content",
+                "relative_position"):
         assert report[key] is None
     assert report["section_5_recommendations"] == []
 
@@ -603,3 +606,125 @@ def test_section_4_no_model_common_prefix_dir_yields_no_overlap(tmp_path: Path) 
     assert section is not None
     assert section["app_consensus"] is not None
     assert section["model_overlap"] is None
+
+
+# ---------------------------------------------------------------------------
+# Step 4f — relative_position wiring
+# ---------------------------------------------------------------------------
+
+def test_relative_position_remains_none_without_filtered_jsonl(tmp_path: Path) -> None:
+    report = assemble_app_report(
+        model_id="m", app_id="com.x", outputs_dir=tmp_path, history=[_entry()],
+    )
+    assert report["relative_position"] is None
+
+
+def test_relative_position_populated_end_to_end(tmp_path: Path) -> None:
+    """End-to-end: full sections 1/2/4 + e1 csv + common_prefix metadata
+    + history all present → all five sub-fields filled."""
+    outputs_dir = tmp_path / "outputs"
+    _write_meta(outputs_dir / "traffic_pattern" / "metadata.json", {"bin_size_s": 60, "block_size": 16})
+    _write_csv_rows(
+        outputs_dir / "traffic_pattern" / "volume.csv",
+        ["bin_start_s", "request_count"],
+        [[0, 1], [60, 1], [120, 50]],
+    )
+    _write_meta(outputs_dir / "f4_prefix" / "metadata.json", {
+        "ideal_overall_hit_ratio": 0.62, "block_size": 16,
+        "total_blocks_sum": 200, "hit_blocks_sum": 124,
+    })
+    _write_csv_rows(
+        outputs_dir / "e1_user_hit_rate" / "user_hit_bs16.csv",
+        ["rank", "hit_rate", "prefix_reuse_blocks", "total_blocks", "request_count"],
+        [[1, 0.5, 1, 1, 5], [2, 0.7, 1, 1, 10], [3, 0.9, 1, 1, 50]],
+    )
+    cp_dir = outputs_dir / "common_prefix"
+    cp_dir.mkdir(parents=True)
+    _write_meta(cp_dir / "metadata.json", {
+        "prefix_length_blocks": 50, "prefix_length_chars": 800,
+    })
+    _write_csv_rows(
+        cp_dir / "coverage_profile.csv",
+        ["position", "block_id", "count", "coverage_pct"],
+        [[0, "9999", 50, 99.0]],
+    )
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0,
+         "raw_prompt": "abc" * 50},
+        {"user_id": "com.x", "request_id": "r2", "timestamp": 120.0,
+         "raw_prompt": "abc" * 50},
+    ])
+    report = assemble_app_report(
+        model_id="qwen_v3_32b_8k",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x", declared_model="Qwen-V3-32B")],
+        filtered_jsonl=filtered,
+    )
+    rp = report["relative_position"]
+    assert rp is not None
+    # request_volume: this APP has 2 requests, model users have [5,10,50] → bottom
+    assert rp["request_volume"]["this_app_request_count"] == 2
+    assert rp["request_volume"]["percentile_rank"] == 0.0
+    # hit_rate present (this app's app_f4 vs cross-app median)
+    assert rp["hit_rate"] is not None
+    assert rp["hit_rate"]["this_app"] is not None
+    # consensus length comparison
+    assert rp["consensus_prefix_length"]["model_chars"] == 800
+    # peak alignment label derived
+    assert rp["peak_alignment"]["label"] in {"high", "medium", "low"}
+    # declared_model_consistency derived from history
+    assert rp["declared_model_consistency"]["is_consistent"] is True
+    assert rp["declared_model_consistency"]["matched_declared_models"] == ["Qwen-V3-32B"]
+
+
+def test_relative_position_unregistered_app_no_consistency(tmp_path: Path) -> None:
+    """Unregistered APP (history=[]) → declared_model_consistency = None."""
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.unknown", "request_id": "r1", "timestamp": 0.0,
+         "raw_prompt": "abc" * 50},
+    ])
+    report = assemble_app_report(
+        model_id="qwen_v3_32b_8k",
+        app_id="com.unknown",
+        outputs_dir=outputs_dir,
+        history=[],
+        filtered_jsonl=filtered,
+    )
+    rp = report["relative_position"]
+    assert rp is not None
+    assert rp["declared_model_consistency"] is None
+
+
+def test_relative_position_uses_filter_stats_for_volume_when_provided(
+    tmp_path: Path,
+) -> None:
+    """filter_stats.kept_count is the authoritative request count for the
+    relative-position card (more accurate than section_2.app_traffic when
+    the trace has empty bins or duplicate-timestamp records)."""
+    outputs_dir = tmp_path / "outputs"
+    _write_meta(outputs_dir / "traffic_pattern" / "metadata.json", {"block_size": 16})
+    _write_csv_rows(
+        outputs_dir / "e1_user_hit_rate" / "user_hit_bs16.csv",
+        ["rank", "hit_rate", "prefix_reuse_blocks", "total_blocks", "request_count"],
+        [[1, 0.5, 1, 1, 1], [2, 0.5, 1, 1, 100]],
+    )
+    filtered = _write_business_jsonl(tmp_path, [
+        {"user_id": "com.x", "request_id": "r1", "timestamp": 0.0,
+         "raw_prompt": "abc" * 50},
+    ])
+    report = assemble_app_report(
+        model_id="m",
+        app_id="com.x",
+        outputs_dir=outputs_dir,
+        history=[_entry(app_id="com.x")],
+        filtered_jsonl=filtered,
+        filter_stats=FilterStats(
+            total_lines=1, kept_count=42,
+            malformed_count=0, missing_user_id_count=0,
+        ),
+    )
+    rp = report["relative_position"]
+    assert rp["request_volume"]["this_app_request_count"] == 42
