@@ -391,6 +391,24 @@ CONTENT_TYPE_EMOJI: dict[str, str] = {
 }
 
 
+def _dominant_content_type(blocks: list[dict]) -> str | None:
+    """Most frequent content_type_guess across the consensus blocks."""
+    from collections import Counter
+    types = [b.get("content_type_guess") for b in blocks
+             if b.get("content_type_guess")]
+    if not types:
+        return None
+    return Counter(types).most_common(1)[0][0]
+
+
+_COMMON_PREFIX_GHOST_CHAIN_CAVEAT = (
+    "<p class='caliber'>⚠ 算法 caveat：当前 common_prefix 用 position-wise "
+    "majority 拼接，业务线分叉数据上可能拼出无任何请求真实使用过的"
+    "<b>幽灵链</b>。文本不可逐字信任；待 trie-greedy 修复后撤除此提示。"
+    "详见仓库 <code>docs/可视化.md</code> 决策表后 caveat 块。</p>"
+)
+
+
 def _section_4(model_dir: Path, report: dict) -> str:
     s4 = report.get("section_4_content") or {}
     if not s4:
@@ -398,49 +416,40 @@ def _section_4(model_dir: Path, report: dict) -> str:
                 "<p class='muted'>未生成 — common_prefix 没跑。</p></section>")
 
     out = ["<section><h2>4. 可复用内容 (Content)</h2>"]
-    out.append(_metric_strip([
-        ("Prefix length",
-         f"{_fmt_num(s4.get('prefix_length_blocks'))} blocks"),
-        ("Prefix chars", _fmt_num(s4.get('prefix_length_chars'))),
+
+    # Metric strip — adds 主类型 derived from consensus_blocks if available.
+    blocks = s4.get("consensus_blocks") or []
+    dominant_type = _dominant_content_type(blocks)
+    metric_items: list[tuple[str, str]] = [
+        ("Prefix length", f"{_fmt_num(s4.get('prefix_length_blocks'))} blocks"),
+        ("Prefix chars", _fmt_num(s4.get("prefix_length_chars"))),
         ("Mean coverage", _fmt_pct((s4.get("mean_coverage_pct") or 0) / 100)),
         ("min_count", _escape(s4.get("min_count_threshold"))),
-    ]))
+    ]
+    if dominant_type:
+        emoji = CONTENT_TYPE_EMOJI.get(dominant_type, "·")
+        metric_items.append(("主类型", f"{emoji} {_escape(dominant_type)}"))
+    out.append(_metric_strip(metric_items))
+
+    # Coverage chart — kept as-is per user request.
     out.append(_img(_png_to_data_uri(model_dir / "common_prefix" / "coverage_plot.png"),
                     "common_prefix coverage"))
 
-    blocks = s4.get("consensus_blocks") or []
-    if blocks:
-        out.append(f"<h3>Top {len(blocks)} consensus blocks</h3>")
-        rows = []
-        for b in blocks:
-            ctype = b.get("content_type_guess") or "other"
-            emoji = CONTENT_TYPE_EMOJI.get(ctype, "·")
-            preview = (b.get("text_preview") or "").replace("\n", " ")
-            if len(preview) > 200:
-                preview = preview[:200] + "…"
-            rows.append(
-                "<tr>"
-                f"<td>{_escape(b.get('rank'))}</td>"
-                f"<td>{_escape(b.get('position'))}</td>"
-                f"<td>{_fmt_num(b.get('count'))}</td>"
-                f"<td>{_fmt_num(b.get('coverage_pct'), ',.2f')}%</td>"
-                f"<td>{emoji} {_escape(ctype)}</td>"
-                f"<td><code>{_escape(preview)}</code></td>"
-                "</tr>"
-            )
-        out.append(
-            "<table class='consensus'><thead><tr>"
-            "<th>rank</th><th>position</th><th>count</th><th>coverage</th>"
-            "<th>type</th><th>text_preview</th>"
-            "</tr></thead><tbody>"
-            + "\n".join(rows)
-            + "</tbody></table>"
-        )
-
-    preview = s4.get("decoded_text_preview") or ""
-    if preview:
-        out.append("<h3>Decoded prefix text (前 500 字符)</h3>")
-        out.append(f"<pre class='preview'>{_escape(preview)}</pre>")
+    # System prompt full text — read the on-disk consensus_prefix.txt directly
+    # (report.json only carries the first 500 chars in decoded_text_preview).
+    out.append("<h3>System Prompt（完整 decoded text）</h3>")
+    out.append(_COMMON_PREFIX_GHOST_CHAIN_CAVEAT)
+    full_text_path = model_dir / "common_prefix" / "consensus_prefix.txt"
+    if full_text_path.is_file():
+        full_text = full_text_path.read_text(encoding="utf-8")
+        out.append(f"<pre class='preview'>{_escape(full_text)}</pre>")
+    else:
+        preview = s4.get("decoded_text_preview") or ""
+        if preview:
+            out.append("<p class='muted'>completed full text 缺失，回退至前 500 字符 preview：</p>")
+            out.append(f"<pre class='preview'>{_escape(preview)}</pre>")
+        else:
+            out.append("<p class='muted'>无可显示文本（consensus_prefix.txt 与 decoded_text_preview 都缺失）。</p>")
 
     out.append("</section>")
     return "\n".join(out)

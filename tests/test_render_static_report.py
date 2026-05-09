@@ -198,3 +198,114 @@ def test_traffic_section_handles_missing_csvs(tmp_path: Path, renderer):
     assert "请求量时序" in html
     # Charts that needed missing CSVs degrade to the alt-text fallback.
     assert "图缺失" in html
+
+
+# ---------------------------------------------------------------------------
+# Section 4 — full system prompt text + ghost-chain caveat
+# ---------------------------------------------------------------------------
+
+def _write_section_4_fixture(model_dir: Path,
+                             *,
+                             full_text: str | None = "你是一个示例 system prompt",
+                             consensus_blocks: list[dict] | None = None,
+                             preview: str = "你是一个示例 system prompt（前 500 字符 preview）") -> dict:
+    """Drop a synthetic section_4 + on-disk consensus_prefix.txt under model_dir.
+
+    Returns the section_4 dict so callers can patch report.json themselves.
+    """
+    if consensus_blocks is None:
+        consensus_blocks = [
+            {"rank": 1, "position": 0, "block_id": "111", "count": 50,
+             "coverage_pct": 100.0, "text_preview": "you are ...",
+             "truncated": True, "content_type_guess": "system_prompt"},
+            {"rank": 2, "position": 1, "block_id": "222", "count": 50,
+             "coverage_pct": 100.0, "text_preview": "tools: ...",
+             "truncated": True, "content_type_guess": "agent_tool_prompt"},
+            {"rank": 3, "position": 2, "block_id": "333", "count": 50,
+             "coverage_pct": 100.0, "text_preview": "you should ...",
+             "truncated": True, "content_type_guess": "system_prompt"},
+        ]
+    if full_text is not None:
+        cp_dir = model_dir / "common_prefix"
+        cp_dir.mkdir(parents=True, exist_ok=True)
+        (cp_dir / "consensus_prefix.txt").write_text(full_text, encoding="utf-8")
+    return {
+        "source": "common_prefix",
+        "consensus_blocks": consensus_blocks,
+        "prefix_length_blocks": 3,
+        "prefix_length_chars": 384,
+        "decoded_text_preview": preview,
+        "min_count_threshold": 10,
+        "mean_coverage_pct": 95.5,
+    }
+
+
+def test_section_4_renders_full_text_from_disk(tmp_path: Path, renderer):
+    outputs_root = tmp_path / "out"
+    md = _write_minimal_report(outputs_root)
+    full_text = "你是一段会被完整渲染的 system prompt。\n包含换行、标点、中文字符。"
+    section_4 = _write_section_4_fixture(md, full_text=full_text)
+    payload = json.loads((md / "report.json").read_text(encoding="utf-8"))
+    payload["section_4_content"] = section_4
+    (md / "report.json").write_text(json.dumps(payload, ensure_ascii=False),
+                                      encoding="utf-8")
+
+    out = renderer.render_one(outputs_root, "demo")
+    html = out.read_text(encoding="utf-8")
+    # Full text from disk shown verbatim, not the 500-char preview.
+    assert "完整 decoded text" in html
+    assert "包含换行、标点、中文字符" in html
+    # Caveat present (always emitted until trie-greedy fix lands).
+    assert "幽灵链" in html
+    # Per-block table is no longer rendered (header gone).
+    assert "consensus blocks" not in html
+    # Coverage chart container still in place (no PNG → 图缺失 fallback).
+    assert "common_prefix coverage" in html
+
+
+def test_section_4_renders_dominant_content_type(tmp_path: Path, renderer):
+    """Metric strip surfaces the most frequent content_type_guess across
+    consensus_blocks (system_prompt wins 2-vs-1 in the default fixture)."""
+    outputs_root = tmp_path / "out"
+    md = _write_minimal_report(outputs_root)
+    payload = json.loads((md / "report.json").read_text(encoding="utf-8"))
+    payload["section_4_content"] = _write_section_4_fixture(md)
+    (md / "report.json").write_text(json.dumps(payload, ensure_ascii=False),
+                                      encoding="utf-8")
+    html = renderer.render_one(outputs_root, "demo").read_text(encoding="utf-8")
+    assert "主类型" in html
+    assert "system_prompt" in html
+
+
+def test_section_4_falls_back_to_preview_when_disk_text_missing(
+    tmp_path: Path, renderer,
+):
+    outputs_root = tmp_path / "out"
+    md = _write_minimal_report(outputs_root)
+    # Pass full_text=None so consensus_prefix.txt is NOT written.
+    section_4 = _write_section_4_fixture(md, full_text=None,
+                                          preview="fallback preview text")
+    payload = json.loads((md / "report.json").read_text(encoding="utf-8"))
+    payload["section_4_content"] = section_4
+    (md / "report.json").write_text(json.dumps(payload, ensure_ascii=False),
+                                      encoding="utf-8")
+    html = renderer.render_one(outputs_root, "demo").read_text(encoding="utf-8")
+    assert "回退至前 500 字符 preview" in html
+    assert "fallback preview text" in html
+    assert "幽灵链" in html  # caveat still emitted in fallback path
+
+
+def test_section_4_handles_empty_consensus_blocks_no_dominant_type(
+    tmp_path: Path, renderer,
+):
+    """No consensus_blocks → no '主类型' metric, but full text path still fires."""
+    outputs_root = tmp_path / "out"
+    md = _write_minimal_report(outputs_root)
+    section_4 = _write_section_4_fixture(md, consensus_blocks=[])
+    payload = json.loads((md / "report.json").read_text(encoding="utf-8"))
+    payload["section_4_content"] = section_4
+    (md / "report.json").write_text(json.dumps(payload, ensure_ascii=False),
+                                      encoding="utf-8")
+    html = renderer.render_one(outputs_root, "demo").read_text(encoding="utf-8")
+    assert "主类型" not in html  # absent when no blocks to derive from
+    assert "完整 decoded text" in html  # full text still shown
