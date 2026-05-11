@@ -448,3 +448,91 @@ def find_common_prefix_chain(
         stop_position=len(chain),
         branch_alternatives=branch_alternatives,
     )
+
+
+# ---------------------------------------------------------------------------
+# Save helpers — trie-greedy variants (write the v1.3 schema per Spec §10)
+# ---------------------------------------------------------------------------
+
+def save_chain_coverage_csv(result: CommonPrefixChainResult, path: Path) -> None:
+    """Write the v1.3 coverage_profile.csv (6 columns).
+
+    Schema: position, block_id, freq, parent_freq, global_coverage_pct,
+    branch_ratio_pct (replaces the legacy 5-column count/total_at_pos shape).
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "position", "block_id", "freq", "parent_freq",
+            "global_coverage_pct", "branch_ratio_pct",
+        ])
+        for cb in result.consensus_blocks:
+            w.writerow([
+                cb.position, cb.block_id, cb.freq, cb.parent_freq,
+                f"{cb.global_coverage_pct:.2f}",
+                f"{cb.branch_ratio_pct:.2f}",
+            ])
+
+
+def save_chain_prefix_text(result: CommonPrefixChainResult, path: Path) -> None:
+    """Write the decoded chain text to disk (mirrors save_prefix_text)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(result.decoded_text, encoding="utf-8")
+
+
+def save_chain_metadata_json(
+    result: CommonPrefixChainResult,
+    path: Path,
+    *,
+    trace_name: str,
+    input_file: str,
+    note: str = "",
+) -> None:
+    """Write the v1.3 common_prefix metadata.json per Spec §10.
+
+    `mean_coverage_pct` is now defined as the mean of `global_coverage_pct`
+    along the chain (was per-position coverage_pct in the legacy algorithm).
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mean_coverage_pct = (
+        round(
+            sum(cb.global_coverage_pct for cb in result.consensus_blocks)
+            / len(result.consensus_blocks),
+            2,
+        )
+        if result.consensus_blocks else 0.0
+    )
+    meta = {
+        "figure": "common_prefix",
+        "trace_name": trace_name,
+        "input_file": input_file,
+        "algorithm": "trie_greedy_v1",
+        "block_size": result.block_size,
+        "total_records": result.total_records,
+        "min_count_threshold": result.min_count_threshold,
+        "branch_threshold": result.branch_threshold,
+        "coverage_threshold": result.coverage_threshold,
+        "prefix_length_blocks": result.prefix_length_blocks,
+        "prefix_length_chars": result.prefix_length_chars,
+        "mean_coverage_pct": mean_coverage_pct,
+        "stop_reason": result.stop_reason,
+        "stop_position": result.stop_position,
+        "branch_alternatives": [
+            {
+                "block_id": str(alt.block_id),
+                "freq": alt.freq,
+                "fraction_of_parent": round(alt.fraction_of_parent, 4),
+                "decoded_text_preview": alt.decoded_text_preview,
+            }
+            for alt in result.branch_alternatives
+        ],
+        "note": note,
+    }
+    path.write_text(
+        json.dumps(meta, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )

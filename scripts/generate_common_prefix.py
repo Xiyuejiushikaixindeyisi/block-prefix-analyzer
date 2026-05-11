@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 """Generate common-prefix analysis for Agent / business JSONL datasets.
 
-Finds the longest block sequence shared by at least min_count requests,
-starting from position 0.  Decodes the result back to the original prompt
-text (system prompt, skills, tool definitions, etc.).
+Builds a path-frequency trie over the records' block_ids and walks the
+heaviest child at each step (`find_common_prefix_chain`, see
+docs/common_prefix_chain_spec.md). The output chain is GUARANTEED to
+be a real prefix path of at least min_count records — fixes the
+"ghost chain" bug of the legacy position-wise majority algorithm.
 
 Usage:
     python scripts/generate_common_prefix.py configs/maas/<model>/common_prefix.yaml
 
 Config keys
 -----------
-input_file   Path to JSONL (relative to project root)
-output_dir   Output directory (relative to project root)
-block_size   Chars per block (must match deployment vLLM block_size)
-min_count    Minimum requests sharing a block to include in prefix [default: 10]
-max_blocks   Hard cap on positions to scan [default: 100000]
-trace_name   (optional) Label [default: business]
-note         (optional) Free-text note
+input_file              Path to JSONL (relative to project root)
+output_dir              Output directory (relative to project root)
+block_size              Chars per block (must match deployment vLLM block_size)
+min_count               Min requests sharing a block to extend the chain [default: 10]
+branch_threshold        Soft floor on heaviest.freq / parent.freq [default: 0.05]
+                        Catches degenerate fragmentation; raise to 0.5 / 0.7
+                        for "clear-mainstream" research.
+coverage_threshold      Optional floor on heaviest.freq / total_records [default: 0.0]
+                        0.0 = disabled; opt-in long-tail trim (e.g. 0.05 = 5%).
+max_blocks              Hard cap on positions to scan [default: 100000]
+trace_name              (optional) Label [default: business]
+note                    (optional) Free-text note
 """
 from __future__ import annotations
 
@@ -27,14 +34,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from block_prefix_analyzer.analysis.common_prefix import (
-    CommonPrefixResult,
-    find_common_prefix,
-    save_coverage_csv,
-    save_metadata_json,
-    save_prefix_text,
+    CommonPrefixChainResult,
+    find_common_prefix_chain,
+    save_chain_coverage_csv,
+    save_chain_metadata_json,
+    save_chain_prefix_text,
 )
 from block_prefix_analyzer.io.business_loader import load_business_jsonl
-from block_prefix_analyzer.plotting.common_prefix import plot_common_prefix
+from block_prefix_analyzer.plotting.common_prefix import plot_common_prefix_chain
 
 
 def _load_flat_yaml(path: Path) -> dict[str, str]:
@@ -54,13 +61,15 @@ def run(config: dict[str, str], project_root: Path) -> None:
         print("[ERROR] block_size is required in config.", file=sys.stderr)
         sys.exit(1)
 
-    block_size  = int(config["block_size"])
-    input_path  = project_root / config["input_file"]
-    output_dir  = project_root / config["output_dir"]
-    min_count   = int(config.get("min_count", "10"))
-    max_blocks  = int(config.get("max_blocks", "100000"))
-    trace_name  = config.get("trace_name", "business")
-    note        = config.get("note", "")
+    block_size         = int(config["block_size"])
+    input_path         = project_root / config["input_file"]
+    output_dir         = project_root / config["output_dir"]
+    min_count          = int(config.get("min_count", "10"))
+    branch_threshold   = float(config.get("branch_threshold", "0.05"))
+    coverage_threshold = float(config.get("coverage_threshold", "0.0"))
+    max_blocks         = int(config.get("max_blocks", "100000"))
+    trace_name         = config.get("trace_name", "business")
+    note               = config.get("note", "")
 
     if not input_path.exists():
         print(f"[ERROR] Input file not found: {input_path}", file=sys.stderr)
@@ -71,26 +80,49 @@ def run(config: dict[str, str], project_root: Path) -> None:
     records = load_business_jsonl(input_path, block_size=block_size, block_registry=registry)
     print(f"  {len(records):,} records loaded  |  {len(registry):,} unique block IDs")
 
-    print(f"Scanning common prefix (min_count={min_count}) ...")
-    result: CommonPrefixResult = find_common_prefix(
+    print(
+        f"Scanning common prefix chain "
+        f"(min_count={min_count}, branch_threshold={branch_threshold}, "
+        f"coverage_threshold={coverage_threshold}) ..."
+    )
+    result: CommonPrefixChainResult = find_common_prefix_chain(
         records,
         block_registry=registry,
         block_size=block_size,
         min_count=min_count,
+        branch_threshold=branch_threshold,
+        coverage_threshold=coverage_threshold,
         max_blocks=max_blocks,
     )
 
     print()
     print(f"  prefix_length_blocks : {result.prefix_length_blocks:,}")
     print(f"  prefix_length_chars  : {result.prefix_length_chars:,}")
-    print(f"  coverage at start    : {result.consensus_blocks[0].coverage_pct:.1f}%"
-          if result.consensus_blocks else "  (no consensus prefix found)")
-    print(f"  coverage at end      : {result.consensus_blocks[-1].coverage_pct:.1f}%"
-          if result.consensus_blocks else "")
+    print(f"  stop_reason          : {result.stop_reason}")
+    print(f"  stop_position        : {result.stop_position}")
+    if result.consensus_blocks:
+        first = result.consensus_blocks[0]
+        last = result.consensus_blocks[-1]
+        print(f"  coverage at start    : {first.global_coverage_pct:.1f}%"
+              f"  (branch_ratio {first.branch_ratio_pct:.1f}%)")
+        print(f"  coverage at end      : {last.global_coverage_pct:.1f}%"
+              f"  (branch_ratio {last.branch_ratio_pct:.1f}%)")
+
+    if result.branch_alternatives:
+        print("  branch_alternatives at stop node (top-{}):".format(
+            len(result.branch_alternatives)))
+        for alt in result.branch_alternatives:
+            preview = alt.decoded_text_preview.replace("\n", " ")
+            print(f"    [{alt.fraction_of_parent * 100:5.1f}% of parent / "
+                  f"freq={alt.freq:>5}]  {preview!r}")
 
     if not result.consensus_blocks:
-        print("[WARN] No common prefix found with the given min_count. "
-              "Try lowering min_count.", file=sys.stderr)
+        print(
+            f"[WARN] No consensus chain found (stop_reason={result.stop_reason}). "
+            "Try lowering min_count or relaxing branch_threshold / "
+            "coverage_threshold.",
+            file=sys.stderr,
+        )
         return
 
     # Preview first 500 chars
@@ -103,20 +135,23 @@ def run(config: dict[str, str], project_root: Path) -> None:
     print("────────────────────────────────────────────────────────────")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    save_coverage_csv(result,    output_dir / "coverage_profile.csv")
-    save_prefix_text(result,     output_dir / "consensus_prefix.txt")
-    save_metadata_json(
+    save_chain_coverage_csv(result, output_dir / "coverage_profile.csv")
+    save_chain_prefix_text(result,  output_dir / "consensus_prefix.txt")
+    save_chain_metadata_json(
         result, output_dir / "metadata.json",
         trace_name=trace_name, input_file=config["input_file"], note=note,
     )
-    title = f"({trace_name}) Common Prefix Coverage  |  block_size={block_size}  min_count={min_count}"
-    plot_common_prefix(result, output_dir / "coverage_plot.png", title=title)
+    title = (
+        f"({trace_name}) Common Prefix Chain  |  block_size={block_size}  "
+        f"min_count={min_count}"
+    )
+    plot_common_prefix_chain(result, output_dir / "coverage_plot.png", title=title)
 
     print(f"\nOutput written to: {output_dir}")
     print(f"  consensus_prefix.txt   — full decoded text ({result.prefix_length_chars:,} chars)")
-    print(f"  coverage_profile.csv   — per-position count")
-    print(f"  coverage_plot.png      — coverage vs. block position")
-    print(f"  metadata.json          — summary stats")
+    print(f"  coverage_profile.csv   — per-step freq + parent_freq + coverage_pcts")
+    print(f"  coverage_plot.png      — global_coverage vs branch_ratio overlay")
+    print(f"  metadata.json          — summary + thresholds + stop diagnostics (v1.3)")
 
 
 def main() -> None:
