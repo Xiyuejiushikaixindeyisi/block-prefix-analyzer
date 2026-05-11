@@ -827,19 +827,27 @@ def _app_section_4(report: dict) -> str:
                 preview = (b.get("text_preview") or "").replace("\n", " ")
                 if len(preview) > 200:
                     preview = preview[:200] + "…"
+                # Alias bridge (Spec §10 / D4): prefer v1.3 names, fall back
+                # to v1.2 so old report.json files still render correctly.
+                freq = b.get("freq") if b.get("freq") is not None else b.get("count")
+                cov = (
+                    b.get("global_coverage_pct")
+                    if b.get("global_coverage_pct") is not None
+                    else b.get("coverage_pct")
+                )
                 rows.append(
                     "<tr>"
                     f"<td>{_escape(b.get('rank'))}</td>"
                     f"<td>{_escape(b.get('position'))}</td>"
-                    f"<td>{_fmt_num(b.get('count'))}</td>"
-                    f"<td>{_fmt_num(b.get('coverage_pct'), ',.2f')}%</td>"
+                    f"<td>{_fmt_num(freq)}</td>"
+                    f"<td>{_fmt_num(cov, ',.2f')}%</td>"
                     f"<td>{emoji} {_escape(ctype)}</td>"
                     f"<td><code>{_escape(preview)}</code></td>"
                     "</tr>"
                 )
             out.append(
                 "<table class='consensus'><thead><tr>"
-                "<th>rank</th><th>position</th><th>count</th><th>coverage</th>"
+                "<th>rank</th><th>position</th><th>freq</th><th>coverage</th>"
                 "<th>type</th><th>text_preview</th></tr></thead><tbody>"
                 + "\n".join(rows)
                 + "</tbody></table>"

@@ -32,8 +32,8 @@ import json
 from pathlib import Path
 
 from block_prefix_analyzer.analysis.common_prefix import (
-    CommonPrefixResult,
-    find_common_prefix,
+    CommonPrefixChainResult,
+    find_common_prefix_chain,
 )
 from block_prefix_analyzer.analysis.content_classifier import classify_content
 from block_prefix_analyzer.analysis.f13 import compute_f13_series
@@ -395,31 +395,33 @@ def compute_app_common_prefix(
     *,
     block_size: int,
     min_count: int = DEFAULT_APP_COMMON_PREFIX_MIN_COUNT,
+    branch_threshold: float = 0.05,
+    coverage_threshold: float = 0.0,
     max_blocks: int = DEFAULT_COMMON_PREFIX_MAX_BLOCKS,
-) -> CommonPrefixResult | None:
-    """Run the common-prefix scan on a per-APP filtered JSONL subset.
+) -> CommonPrefixChainResult:
+    """Run the trie-greedy common-prefix scan on a per-APP filtered JSONL.
 
     ``min_count=2`` (per plan §5.4 decision) — any block shared by at
-    least 2 of the APP's requests counts toward the consensus prefix.
-    Single-request APPs naturally yield an empty consensus: every
-    position has count=1 which is below the threshold.
+    least 2 of the APP's requests is eligible to extend the chain.
+    ``branch_threshold=0.05`` is a soft floor for degenerate
+    fragmentation per Spec §2; ``coverage_threshold=0.0`` is opt-in.
 
-    Returns ``None`` when the filtered subset has zero records. When
-    records exist but no consensus is found, returns a
-    :class:`CommonPrefixResult` whose ``consensus_blocks`` list is empty.
+    Always returns a :class:`CommonPrefixChainResult` (no ``None`` for
+    empty input — ``stop_reason="no_records"`` signals that case via
+    ``result.stop_reason``).
     """
     filtered_jsonl = Path(filtered_jsonl)
     registry: dict[int, str] = {}
     records = load_business_jsonl(
         filtered_jsonl, block_size=block_size, block_registry=registry
     )
-    if not records:
-        return None
-    return find_common_prefix(
+    return find_common_prefix_chain(
         records,
         block_registry=registry,
         block_size=block_size,
         min_count=min_count,
+        branch_threshold=branch_threshold,
+        coverage_threshold=coverage_threshold,
         max_blocks=max_blocks,
     )
 
@@ -481,13 +483,14 @@ def compute_consensus_overlap(
 
 
 def _consensus_result_to_section_dict(
-    result: CommonPrefixResult,
+    result: CommonPrefixChainResult,
     *,
     top_n: int = DEFAULT_APP_CONSENSUS_TOP_N,
     preview_chars: int = DEFAULT_DECODED_TEXT_PREVIEW_CHARS,
 ) -> dict:
-    """Convert a :class:`CommonPrefixResult` into the public app-section JSON
-    shape (top-N consensus blocks with text previews + content_type_guess)."""
+    """Convert a :class:`CommonPrefixChainResult` into the v1.3 app-section
+    JSON shape (top-N consensus blocks with text previews + content_type
+    + the chain-aware fields per Spec §10)."""
     consensus_blocks: list[dict] = []
     for rank, cb in enumerate(result.consensus_blocks[:top_n], start=1):
         text_slice = result.decoded_text[
@@ -497,20 +500,36 @@ def _consensus_result_to_section_dict(
             "rank": rank,
             "position": cb.position,
             "block_id": cb.block_id,
-            "count": cb.count,
-            "coverage_pct": round(cb.coverage_pct, 2),
+            "freq": cb.freq,
+            "parent_freq": cb.parent_freq,
+            "global_coverage_pct": round(cb.global_coverage_pct, 2),
+            "branch_ratio_pct": round(cb.branch_ratio_pct, 2),
             "text_preview": text_slice,
             "truncated": len(text_slice) >= result.block_size,
             "content_type_guess": classify_content(text_slice),
         })
     return {
+        "algorithm": "trie_greedy_v1",
         "prefix_length_blocks": result.prefix_length_blocks,
         "prefix_length_chars": result.prefix_length_chars,
         "min_count_threshold": result.min_count_threshold,
+        "branch_threshold": result.branch_threshold,
+        "coverage_threshold": result.coverage_threshold,
         "consensus_blocks": consensus_blocks,
         "decoded_text_preview": result.decoded_text[:preview_chars],
         "block_size": result.block_size,
         "total_records": result.total_records,
+        "stop_reason": result.stop_reason,
+        "stop_position": result.stop_position,
+        "branch_alternatives": [
+            {
+                "block_id": str(alt.block_id),
+                "freq": alt.freq,
+                "fraction_of_parent": round(alt.fraction_of_parent, 4),
+                "decoded_text_preview": alt.decoded_text_preview,
+            }
+            for alt in result.branch_alternatives
+        ],
     }
 
 
@@ -535,7 +554,9 @@ def build_app_section_4(
         filtered_jsonl, block_size=block_size, min_count=min_count
     )
 
-    if result is None or not result.consensus_blocks:
+    # find_common_prefix_chain always returns; empty chain → app_consensus=None
+    # to keep the existing schema contract (Spec §10).
+    if not result.consensus_blocks:
         app_consensus: dict | None = None
         app_block_ids: set[str] = set()
     else:

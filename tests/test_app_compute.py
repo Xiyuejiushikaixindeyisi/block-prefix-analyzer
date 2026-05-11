@@ -635,14 +635,19 @@ def test_compute_app_common_prefix_basic_with_shared_prompt(tmp_path: Path) -> N
     # 9 full blocks of "abc" * 50 = 144 chars are shared by all 3 requests.
     assert result.prefix_length_blocks == 9
     assert result.prefix_length_chars == 144
-    assert all(cb.count == 3 for cb in result.consensus_blocks)
+    # v1.3: ChainBlock.freq replaces ChainBlock.count.
+    assert all(cb.freq == 3 for cb in result.consensus_blocks)
     assert "abcabc" in result.decoded_text
 
 
-def test_compute_app_common_prefix_returns_none_for_empty_jsonl(tmp_path: Path) -> None:
+def test_compute_app_common_prefix_empty_jsonl_yields_no_records(tmp_path: Path) -> None:
+    """v1.3: function always returns; empty input → stop_reason='no_records'."""
     src = tmp_path / "empty.jsonl"
     src.write_text("", encoding="utf-8")
-    assert compute_app_common_prefix(src, block_size=16) is None
+    result = compute_app_common_prefix(src, block_size=16)
+    assert result.stop_reason == "no_records"
+    assert result.consensus_blocks == []
+    assert result.total_records == 0
 
 
 def test_compute_app_common_prefix_single_record_yields_empty_consensus(

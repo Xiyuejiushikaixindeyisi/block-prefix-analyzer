@@ -207,6 +207,49 @@ def test_consensus_blocks_top_n_with_text_preview(tmp_path: Path) -> None:
     assert blocks[1]["text_preview"] == "bbbb"
 
 
+def test_consensus_blocks_alias_v1_2_csv_emits_v1_3_field_names(
+    tmp_path: Path,
+) -> None:
+    """Alias bridge: v1.2 CSV (count/coverage_pct) → v1.3 dict (freq /
+    global_coverage_pct). parent_freq + branch_ratio_pct are None because
+    legacy data cannot supply trie-aware values."""
+    coverage = tmp_path / "coverage.csv"
+    _write_csv(coverage, ["position", "block_id", "count", "coverage_pct"], [
+        [0, "blk_0", 100, 99.5],
+    ])
+    decoded = tmp_path / "decoded.txt"
+    decoded.write_text("aaaa", encoding="utf-8")
+    blocks, _ = consensus_blocks(coverage, decoded, block_size=4)
+    assert blocks[0]["freq"] == 100
+    assert blocks[0]["global_coverage_pct"] == 99.5
+    assert blocks[0]["parent_freq"] is None
+    assert blocks[0]["branch_ratio_pct"] is None
+    # Legacy field names are NOT in the output (alias is one-way).
+    assert "count" not in blocks[0]
+    assert "coverage_pct" not in blocks[0]
+
+
+def test_consensus_blocks_v1_3_csv_passes_through_chain_aware_fields(
+    tmp_path: Path,
+) -> None:
+    """v1.3 CSV (freq/parent_freq/global_coverage_pct/branch_ratio_pct) is
+    read directly without alias and emits all 4 chain-aware fields."""
+    coverage = tmp_path / "coverage.csv"
+    _write_csv(coverage,
+               ["position", "block_id", "freq", "parent_freq",
+                "global_coverage_pct", "branch_ratio_pct"],
+               [[0, "blk_0", 100, 100, 100.00, 100.00],
+                [1, "blk_1", 60, 100, 60.00, 60.00]])
+    decoded = tmp_path / "decoded.txt"
+    decoded.write_text("aaaabbbb", encoding="utf-8")
+    blocks, _ = consensus_blocks(coverage, decoded, block_size=4)
+    assert len(blocks) == 2
+    assert blocks[1]["freq"] == 60
+    assert blocks[1]["parent_freq"] == 100
+    assert blocks[1]["global_coverage_pct"] == 60.0
+    assert blocks[1]["branch_ratio_pct"] == 60.0
+
+
 def test_consensus_blocks_missing_csv_returns_empty(tmp_path: Path) -> None:
     blocks, text = consensus_blocks(
         tmp_path / "missing.csv",

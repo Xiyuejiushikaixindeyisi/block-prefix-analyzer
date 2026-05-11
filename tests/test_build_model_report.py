@@ -116,7 +116,7 @@ def test_build_one_writes_v11_report(tmp_path: Path, builder):
     assert out_path.exists()
 
     report = json.loads(out_path.read_text(encoding="utf-8"))
-    assert report["schema_version"] == "1.2"
+    assert report["schema_version"] == "1.3"
     assert report["scope"]["model_id"] == "demo"
     # Without a data file under data_root, data_version is None.
     assert report["meta"]["data_version"] is None
@@ -182,7 +182,7 @@ def test_cli_model_end_to_end(tmp_path: Path):
     out_path = outputs_root / "demo" / "report.json"
     assert out_path.exists()
     report = json.loads(out_path.read_text(encoding="utf-8"))
-    assert report["schema_version"] == "1.2"
+    assert report["schema_version"] == "1.3"
     assert report["scope"]["model_id"] == "demo"
 
 

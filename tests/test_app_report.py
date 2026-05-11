@@ -64,15 +64,15 @@ def _write_meta(path: Path, payload: dict) -> None:
 # Schema version & top-level shape
 # ---------------------------------------------------------------------------
 
-def test_schema_version_is_v1_2(tmp_path: Path) -> None:
+def test_schema_version_is_v1_3(tmp_path: Path) -> None:
     report = assemble_app_report(
         model_id="qwen_v3_5_27b_64k",
         app_id="com.x",
         outputs_dir=tmp_path,
         history=[_entry(app_id="com.x")],
     )
-    assert report["schema_version"] == "1.2"
-    assert SCHEMA_VERSION == "1.2"
+    assert report["schema_version"] == "1.3"
+    assert SCHEMA_VERSION == "1.3"
 
 
 def test_top_level_keys_extend_model_report_with_relative_position(tmp_path: Path) -> None:

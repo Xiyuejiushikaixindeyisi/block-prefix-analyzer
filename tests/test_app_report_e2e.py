@@ -191,7 +191,7 @@ def test_e2e_synthetic_golden_values(tmp_path: Path, builder, capsys) -> None:
     report = json.loads(report_path.read_text(encoding="utf-8"))
 
     # ------- envelope + scope -------
-    assert report["schema_version"] == "1.2"
+    assert report["schema_version"] == "1.3"
     scope = report["scope"]
     assert scope["kind"] == "app"
     assert scope["model_id"] == GOLDEN_MODEL
@@ -255,8 +255,8 @@ def test_e2e_synthetic_golden_values(tmp_path: Path, builder, capsys) -> None:
     assert ac["prefix_length_blocks"] == GOLDEN_BLOCKS_PER_REQUEST
     assert ac["prefix_length_chars"] == GOLDEN_BLOCKS_PER_REQUEST * GOLDEN_BLOCK_SIZE
     assert ac["min_count_threshold"] == 2
-    # Each consensus block has count == 3 (all 3 requests share).
-    assert all(b["count"] == 3 for b in ac["consensus_blocks"])
+    # v1.3: count → freq. Each consensus block has freq == 3 (all 3 share).
+    assert all(b["freq"] == 3 for b in ac["consensus_blocks"])
     # Overlap: APP block_ids vs synthetic model_block_a/b → 0 shared.
     overlap = s4["model_overlap"]
     assert overlap["model_unique_block_count"] == 2

@@ -309,6 +309,9 @@ def build_section_4_content(
     common_prefix: dict | None,
     common_prefix_dir: Path,
 ) -> dict | None:
+    """Section 4 builder. Surfaces v1.3 fields when the metadata blob
+    has them (after commit 2's script switch); v1.2 metadata blobs leave
+    those fields as ``None`` / ``[]``."""
     if common_prefix is None:
         return None
     block_size = int(common_prefix.get("block_size", 128))
@@ -319,10 +322,16 @@ def build_section_4_content(
     )
     return {
         "source": "common_prefix",
+        "algorithm": common_prefix.get("algorithm"),
         "consensus_blocks": consensus,
         "prefix_length_blocks": common_prefix.get("prefix_length_blocks"),
         "prefix_length_chars": common_prefix.get("prefix_length_chars"),
         "decoded_text_preview": decoded_text[:500] if decoded_text else "",
         "min_count_threshold": common_prefix.get("min_count_threshold"),
+        "branch_threshold": common_prefix.get("branch_threshold"),
+        "coverage_threshold": common_prefix.get("coverage_threshold"),
         "mean_coverage_pct": common_prefix.get("mean_coverage_pct"),
+        "stop_reason": common_prefix.get("stop_reason"),
+        "stop_position": common_prefix.get("stop_position"),
+        "branch_alternatives": common_prefix.get("branch_alternatives") or [],
     }

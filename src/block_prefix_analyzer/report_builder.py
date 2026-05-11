@@ -59,7 +59,7 @@ from block_prefix_analyzer.reports.sections import (
 import json
 
 
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "1.3"
 DATA_VERSION_PREFIX_LEN = 16
 
 

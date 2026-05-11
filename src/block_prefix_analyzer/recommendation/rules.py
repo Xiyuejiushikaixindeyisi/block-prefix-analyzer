@@ -78,7 +78,17 @@ def rule_pin_chain(report: dict) -> Recommendation | None:
     """R-PIN-CHAIN: pin a long, dominant common prefix when hit ratio is mid."""
     prefix_len = _get(report, "section_4_content", "prefix_length_blocks")
     consensus = _get(report, "section_4_content", "consensus_blocks") or []
-    head_cov = consensus[0]["coverage_pct"] if consensus else None
+    # Alias bridge (Spec §10 / D4): prefer v1.3 global_coverage_pct, fall
+    # back to v1.2 coverage_pct so old report.json files still trigger.
+    if consensus:
+        first = consensus[0]
+        head_cov = (
+            first.get("global_coverage_pct")
+            if first.get("global_coverage_pct") is not None
+            else first.get("coverage_pct")
+        )
+    else:
+        head_cov = None
     ideal_hit = _ideal_hit(report)
 
     if prefix_len is None or head_cov is None or ideal_hit is None:

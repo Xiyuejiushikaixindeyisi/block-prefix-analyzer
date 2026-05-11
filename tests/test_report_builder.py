@@ -300,7 +300,9 @@ def test_full_outputs_populates_every_section(tmp_path: Path):
     assert s4["prefix_length_blocks"] == 2
     assert len(s4["consensus_blocks"]) == 2
     assert s4["consensus_blocks"][0]["rank"] == 1
-    assert s4["consensus_blocks"][0]["coverage_pct"] == 97.3
+    # v1.3: coverage_pct → global_coverage_pct (alias bridge in stats.py
+    # reads the legacy v1.2 fixture csv and re-emits under the new name).
+    assert s4["consensus_blocks"][0]["global_coverage_pct"] == 97.3
     assert s4["consensus_blocks"][0]["text_preview"]
     assert s4["consensus_blocks"][0]["content_type_guess"] in {
         "system_prompt", "rag_template", "code", "qa_template",
