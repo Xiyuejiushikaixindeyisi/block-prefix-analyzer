@@ -191,11 +191,12 @@ def test_reuse_rank_distribution_missing_csv_returns_none(tmp_path: Path) -> Non
 
 def test_consensus_blocks_top_n_with_text_preview(tmp_path: Path) -> None:
     coverage = tmp_path / "coverage.csv"
-    _write_csv(coverage, ["position", "block_id", "count", "coverage_pct"], [
-        [0, "blk_0", 100, 99.5],
-        [1, "blk_1", 80, 80.0],
-        [2, "blk_2", 30, 30.0],
-    ])
+    _write_csv(coverage,
+               ["position", "block_id", "freq", "parent_freq",
+                "global_coverage_pct", "branch_ratio_pct"],
+               [[0, "blk_0", 100, 100, 99.5, 100.0],
+                [1, "blk_1", 80, 100, 80.0, 80.0],
+                [2, "blk_2", 30, 80, 30.0, 37.5]])
     decoded = tmp_path / "decoded.txt"
     decoded.write_text("aaaabbbbcccc", encoding="utf-8")  # 12 chars, block_size=4
     blocks, full_text = consensus_blocks(coverage, decoded, block_size=4, top_n=2)
@@ -207,33 +208,11 @@ def test_consensus_blocks_top_n_with_text_preview(tmp_path: Path) -> None:
     assert blocks[1]["text_preview"] == "bbbb"
 
 
-def test_consensus_blocks_alias_v1_2_csv_emits_v1_3_field_names(
-    tmp_path: Path,
-) -> None:
-    """Alias bridge: v1.2 CSV (count/coverage_pct) → v1.3 dict (freq /
-    global_coverage_pct). parent_freq + branch_ratio_pct are None because
-    legacy data cannot supply trie-aware values."""
-    coverage = tmp_path / "coverage.csv"
-    _write_csv(coverage, ["position", "block_id", "count", "coverage_pct"], [
-        [0, "blk_0", 100, 99.5],
-    ])
-    decoded = tmp_path / "decoded.txt"
-    decoded.write_text("aaaa", encoding="utf-8")
-    blocks, _ = consensus_blocks(coverage, decoded, block_size=4)
-    assert blocks[0]["freq"] == 100
-    assert blocks[0]["global_coverage_pct"] == 99.5
-    assert blocks[0]["parent_freq"] is None
-    assert blocks[0]["branch_ratio_pct"] is None
-    # Legacy field names are NOT in the output (alias is one-way).
-    assert "count" not in blocks[0]
-    assert "coverage_pct" not in blocks[0]
-
-
 def test_consensus_blocks_v1_3_csv_passes_through_chain_aware_fields(
     tmp_path: Path,
 ) -> None:
     """v1.3 CSV (freq/parent_freq/global_coverage_pct/branch_ratio_pct) is
-    read directly without alias and emits all 4 chain-aware fields."""
+    read directly and emits all 4 chain-aware fields."""
     coverage = tmp_path / "coverage.csv"
     _write_csv(coverage,
                ["position", "block_id", "freq", "parent_freq",
@@ -248,6 +227,19 @@ def test_consensus_blocks_v1_3_csv_passes_through_chain_aware_fields(
     assert blocks[1]["parent_freq"] == 100
     assert blocks[1]["global_coverage_pct"] == 60.0
     assert blocks[1]["branch_ratio_pct"] == 60.0
+
+
+def test_consensus_blocks_v1_2_csv_no_longer_accepted(tmp_path: Path) -> None:
+    """commit 5 removed the v1.2 alias. A pure-legacy CSV (count /
+    coverage_pct, no v1.3 columns) silently produces no rows now."""
+    coverage = tmp_path / "coverage.csv"
+    _write_csv(coverage, ["position", "block_id", "count", "coverage_pct"],
+               [[0, "blk_0", 100, 99.5]])
+    decoded = tmp_path / "decoded.txt"
+    decoded.write_text("aaaa", encoding="utf-8")
+    blocks, full_text = consensus_blocks(coverage, decoded, block_size=4)
+    assert blocks == []
+    assert full_text == ""
 
 
 def test_consensus_blocks_missing_csv_returns_empty(tmp_path: Path) -> None:

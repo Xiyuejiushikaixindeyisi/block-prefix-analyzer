@@ -96,11 +96,14 @@ def _with_request_interval(report: dict, p50: float) -> dict:
 
 def _with_common_prefix(report: dict, prefix_blocks: int,
                          head_coverage: float) -> dict:
+    # v1.3 schema: count → freq, coverage_pct → global_coverage_pct.
     report["section_4_content"] = {
         "prefix_length_blocks": prefix_blocks,
         "consensus_blocks": [
-            {"position": 0, "coverage_pct": head_coverage,
-             "count": 100, "rank": 1, "text_preview": "x"}
+            {"position": 0, "global_coverage_pct": head_coverage,
+             "branch_ratio_pct": head_coverage,
+             "freq": 100, "parent_freq": 100,
+             "rank": 1, "text_preview": "x"}
         ],
     }
     return report

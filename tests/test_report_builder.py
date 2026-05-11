@@ -182,12 +182,14 @@ def _write_full_outputs(outputs_dir: Path) -> None:
         "block_size": 16,
         "mean_coverage_pct": 95.5,
     })
+    # v1.3 schema (commit 5 deleted the v1.2 alias bridge in stats.consensus_blocks).
     _write_csv(
         outputs_dir / "common_prefix" / "coverage_profile.csv",
-        ["position", "block_id", "count", "total_at_pos", "coverage_pct"],
+        ["position", "block_id", "freq", "parent_freq",
+         "global_coverage_pct", "branch_ratio_pct"],
         [
-            [0, "abcd", 180, 185, 97.3],
-            [1, "efgh", 175, 185, 94.6],
+            [0, "abcd", 180, 185, 97.3, 97.3],
+            [1, "efgh", 175, 180, 94.6, 97.2],
         ],
     )
     # decoded_text: 32 chars; first 16 → block 0, next 16 → block 1
@@ -300,8 +302,6 @@ def test_full_outputs_populates_every_section(tmp_path: Path):
     assert s4["prefix_length_blocks"] == 2
     assert len(s4["consensus_blocks"]) == 2
     assert s4["consensus_blocks"][0]["rank"] == 1
-    # v1.3: coverage_pct → global_coverage_pct (alias bridge in stats.py
-    # reads the legacy v1.2 fixture csv and re-emits under the new name).
     assert s4["consensus_blocks"][0]["global_coverage_pct"] == 97.3
     assert s4["consensus_blocks"][0]["text_preview"]
     assert s4["consensus_blocks"][0]["content_type_guess"] in {

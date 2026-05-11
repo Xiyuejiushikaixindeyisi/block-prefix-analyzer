@@ -184,14 +184,10 @@ def consensus_blocks(
     decoded prefix text (used for downstream preview slicing). Returns
     ``([], "")`` when ``coverage_csv`` is missing.
 
-    Alias bridge (v1.2 → v1.3, see Spec §10 / D4):
-        Output dicts always use the v1.3 field names (``freq``,
-        ``parent_freq``, ``global_coverage_pct``, ``branch_ratio_pct``).
-        When reading a legacy v1.2 CSV (which has ``count`` /
-        ``coverage_pct`` and no parent_freq / branch_ratio_pct), the
-        legacy values are mapped onto the new names; ``parent_freq``
-        and ``branch_ratio_pct`` are emitted as ``None`` because the
-        v1.2 algorithm cannot supply trie-aware values.
+    Reads the v1.3 schema (``freq`` / ``parent_freq`` /
+    ``global_coverage_pct`` / ``branch_ratio_pct``). Legacy v1.2 columns
+    (``count`` / ``coverage_pct``) are no longer accepted — the alias
+    bridge was removed in commit 5 of the trie-greedy migration.
     """
     if not coverage_csv.exists():
         return [], ""
@@ -200,21 +196,13 @@ def consensus_blocks(
         reader = csv.DictReader(f)
         for r in reader:
             try:
-                # Alias: prefer v1.3 names, fall back to v1.2.
-                freq_raw = r.get("freq") or r.get("count")
-                cov_raw = r.get("global_coverage_pct") or r.get("coverage_pct")
-                if freq_raw is None or cov_raw is None:
-                    continue
                 rows.append({
                     "position": int(r["position"]),
                     "block_id": r["block_id"],
-                    "freq": int(freq_raw),
-                    "parent_freq": int(r["parent_freq"]) if r.get("parent_freq") else None,
-                    "global_coverage_pct": float(cov_raw),
-                    "branch_ratio_pct": (
-                        float(r["branch_ratio_pct"])
-                        if r.get("branch_ratio_pct") else None
-                    ),
+                    "freq": int(r["freq"]),
+                    "parent_freq": int(r["parent_freq"]),
+                    "global_coverage_pct": float(r["global_coverage_pct"]),
+                    "branch_ratio_pct": float(r["branch_ratio_pct"]),
                 })
             except (KeyError, ValueError):
                 continue
@@ -237,10 +225,7 @@ def consensus_blocks(
             "freq": row["freq"],
             "parent_freq": row["parent_freq"],
             "global_coverage_pct": round(row["global_coverage_pct"], 2),
-            "branch_ratio_pct": (
-                round(row["branch_ratio_pct"], 2)
-                if row["branch_ratio_pct"] is not None else None
-            ),
+            "branch_ratio_pct": round(row["branch_ratio_pct"], 2),
             "text_preview": text_slice,
             "truncated": truncated,
             "content_type_guess": classify_content(text_slice),

@@ -872,14 +872,8 @@ def _app_section_4(report: dict) -> str:
                 preview = (b.get("text_preview") or "").replace("\n", " ")
                 if len(preview) > 200:
                     preview = preview[:200] + "…"
-                # Alias bridge (Spec §10 / D4): prefer v1.3 names, fall back
-                # to v1.2 so old report.json files still render correctly.
-                freq = b.get("freq") if b.get("freq") is not None else b.get("count")
-                cov = (
-                    b.get("global_coverage_pct")
-                    if b.get("global_coverage_pct") is not None
-                    else b.get("coverage_pct")
-                )
+                freq = b.get("freq")
+                cov = b.get("global_coverage_pct")
                 rows.append(
                     "<tr>"
                     f"<td>{_escape(b.get('rank'))}</td>"
