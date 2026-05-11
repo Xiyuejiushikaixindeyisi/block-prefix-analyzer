@@ -401,12 +401,42 @@ def _dominant_content_type(blocks: list[dict]) -> str | None:
     return Counter(types).most_common(1)[0][0]
 
 
-_COMMON_PREFIX_GHOST_CHAIN_CAVEAT = (
-    "<p class='caliber'>⚠ 算法 caveat：当前 common_prefix 用 position-wise "
-    "majority 拼接，业务线分叉数据上可能拼出无任何请求真实使用过的"
-    "<b>幽灵链</b>。文本不可逐字信任；待 trie-greedy 修复后撤除此提示。"
-    "详见仓库 <code>docs/可视化.md</code> 决策表后 caveat 块。</p>"
-)
+def _branch_alternatives_html(
+    alts: list[dict], stop_reason: str | None,
+) -> str:
+    """Render the branch-alternatives diagnostic table (Spec §7).
+
+    Shows the competing children at the trie-greedy stop node so readers
+    can see WHY the consensus chain ended and what other paths existed.
+    """
+    rows = []
+    for alt in alts:
+        preview = (alt.get("decoded_text_preview") or "").replace("\n", " ")
+        if len(preview) > 200:
+            preview = preview[:200] + "…"
+        frac = alt.get("fraction_of_parent")
+        rows.append(
+            "<tr>"
+            f"<td><code>{_escape(alt.get('block_id'))}</code></td>"
+            f"<td>{_fmt_num(alt.get('freq'))}</td>"
+            f"<td>{_fmt_pct(frac) if frac is not None else '—'}</td>"
+            f"<td><code>{_escape(preview)}</code></td>"
+            "</tr>"
+        )
+    suffix = (
+        f"（stop_reason: <code>{_escape(stop_reason)}</code>）"
+        if stop_reason else ""
+    )
+    return (
+        f"<h3>分叉点替代项 (top {len(alts)}){suffix}</h3>"
+        "<p class='muted'>chain 在此处终止时主流之外的 top-N 候选；"
+        "<code>fraction</code> = 该候选在停止节点子节点中的占比。</p>"
+        "<table class='consensus'><thead><tr>"
+        "<th>block_id</th><th>freq</th><th>fraction</th><th>text_preview</th>"
+        "</tr></thead><tbody>"
+        + "\n".join(rows)
+        + "</tbody></table>"
+    )
 
 
 def _section_4(model_dir: Path, report: dict) -> str:
@@ -429,6 +459,10 @@ def _section_4(model_dir: Path, report: dict) -> str:
     if dominant_type:
         emoji = CONTENT_TYPE_EMOJI.get(dominant_type, "·")
         metric_items.append(("主类型", f"{emoji} {_escape(dominant_type)}"))
+    # v1.3 trie-greedy: surface stop_reason as a metric (absent on v1.2 reports).
+    stop_reason = s4.get("stop_reason")
+    if stop_reason:
+        metric_items.append(("Stop reason", _escape(stop_reason)))
     out.append(_metric_strip(metric_items))
 
     # Coverage chart — kept as-is per user request.
@@ -437,8 +471,10 @@ def _section_4(model_dir: Path, report: dict) -> str:
 
     # System prompt full text — read the on-disk consensus_prefix.txt directly
     # (report.json only carries the first 500 chars in decoded_text_preview).
+    # The position-wise-majority "ghost chain" caveat that lived here was
+    # removed in commit 4 of the trie-greedy migration: trie path-closed
+    # invariant guarantees the chain is a real prefix of >= min_count records.
     out.append("<h3>System Prompt（完整 decoded text）</h3>")
-    out.append(_COMMON_PREFIX_GHOST_CHAIN_CAVEAT)
     full_text_path = model_dir / "common_prefix" / "consensus_prefix.txt"
     if full_text_path.is_file():
         full_text = full_text_path.read_text(encoding="utf-8")
@@ -450,6 +486,11 @@ def _section_4(model_dir: Path, report: dict) -> str:
             out.append(f"<pre class='preview'>{_escape(preview)}</pre>")
         else:
             out.append("<p class='muted'>无可显示文本（consensus_prefix.txt 与 decoded_text_preview 都缺失）。</p>")
+
+    # v1.3 trie-greedy: branch alternatives at the stop point (Spec §7).
+    branch_alts = s4.get("branch_alternatives") or []
+    if branch_alts:
+        out.append(_branch_alternatives_html(branch_alts, stop_reason))
 
     out.append("</section>")
     return "\n".join(out)
@@ -810,13 +851,17 @@ def _app_section_4(report: dict) -> str:
 
     ac = s4.get("app_consensus") or {}
     if ac:
-        out.append(_metric_strip([
+        ac_metrics: list[tuple[str, str]] = [
             ("Prefix length",
              f"{_fmt_num(ac.get('prefix_length_blocks'))} blocks"),
             ("Prefix chars", _fmt_num(ac.get("prefix_length_chars"))),
             ("min_count", _escape(ac.get("min_count_threshold"))),
             ("Total records", _fmt_num(ac.get("total_records"))),
-        ]))
+        ]
+        ac_stop = ac.get("stop_reason")
+        if ac_stop:
+            ac_metrics.append(("Stop reason", _escape(ac_stop)))
+        out.append(_metric_strip(ac_metrics))
         blocks = ac.get("consensus_blocks") or []
         if blocks:
             out.append(f"<h3>Top {len(blocks)} consensus blocks</h3>")
@@ -856,6 +901,11 @@ def _app_section_4(report: dict) -> str:
         if preview:
             out.append("<h3>Decoded prefix text (前 500 字符)</h3>")
             out.append(f"<pre class='preview'>{_escape(preview)}</pre>")
+
+        # v1.3 trie-greedy: branch alternatives diagnostic.
+        ac_alts = ac.get("branch_alternatives") or []
+        if ac_alts:
+            out.append(_branch_alternatives_html(ac_alts, ac_stop))
     else:
         out.append("<p class='muted'>该 APP 在过滤后无共识 prefix（min_count=2 下零位置共享）。</p>")
 

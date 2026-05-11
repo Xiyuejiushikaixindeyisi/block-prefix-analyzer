@@ -49,11 +49,10 @@
 > 数字 + 模型基线作为对照。这保证 APP 报告里的每个数字都"属于这个 APP"，
 > 而不是模型平均。
 
-> ⚠ **维度 ④ 已知问题（2026-05-09）**：`common_prefix` 当前算法是 position-wise
-> majority，业务线分叉时拼出的链可能在任何请求中都不真实存在。**报告里
-> "system prompt" 解码文本不可逐字信任**；命中率类数字（① / ② / ③）不受影响。
-> 修复方向 = path-closed trie greedy main path（三阈值守门），详见
-> [docs/可视化.md 决策表后 caveat 块](./可视化.md)。
+> ✅ **维度 ④ 算法已升级到 trie-greedy（2026-05-11，v1.3）**：原 position-wise
+> majority 的"幽灵链" bug 已修复。报告里展示的 system prompt 文本现在
+> **路径闭合**——每段共识 block_id 序列至少被 `min_count` 个真实请求使用过。
+> 完整设计见 [docs/common_prefix_chain_spec.md](./common_prefix_chain_spec.md)。
 
 ---
 

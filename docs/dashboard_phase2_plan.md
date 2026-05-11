@@ -342,9 +342,13 @@ build_app_registry.py 末尾打印：
 
 ### 5.4 Section D：System Prompt 共识块
 
-> ⚠ **底层算法已知问题（2026-05-09）**：当前 `find_common_prefix` 是 **position-wise majority**，业务线分叉时会拼出"幽灵链"（数值不真实存在的 block_id 序列）。详见 [docs/可视化.md 决策表后 caveat 块](./可视化.md)。**APP 报告 Section D 受同样影响**：`app_consensus.consensus_blocks` 在多业务线 APP 上可能虚高，`decoded_text_preview` 不可逐字信任。`model_overlap` 字段**不受影响**（它基于 block_id 集合而非链）。
->
-> 修复方向：切换到 **path-closed trie greedy main path**（三阈值 `min_count` / `branch_threshold` / `coverage_threshold`，每 block 同时输出 `freq` / `parent_freq` / `global_coverage_pct` / `branch_ratio_pct`），实施待 spec session 立项。
+> ✅ **算法已升级到 trie-greedy（2026-05-11，v1.3）**：原 position-wise
+> majority 的"幽灵链" bug 已修复。APP 报告 Section D 与模型 Section 4 同步
+> 切换到 `find_common_prefix_chain`，每个 consensus block 输出 `freq` /
+> `parent_freq` / `global_coverage_pct` / `branch_ratio_pct`，并附带
+> `stop_reason` + `branch_alternatives` 诊断信息。详见
+> [docs/common_prefix_chain_spec.md](./common_prefix_chain_spec.md)。
+> `model_overlap` 字段语义不变。
 
 | 指标 | 来源 | 备注 |
 |---|---|---|

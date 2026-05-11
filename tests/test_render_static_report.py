@@ -211,29 +211,47 @@ def test_traffic_section_handles_missing_csvs(tmp_path: Path, renderer):
 
 
 # ---------------------------------------------------------------------------
-# Section 4 — full system prompt text + ghost-chain caveat
+# Section 4 — full system prompt text + v1.3 trie-greedy diagnostics
 # ---------------------------------------------------------------------------
 
 def _write_section_4_fixture(model_dir: Path,
                              *,
                              full_text: str | None = "你是一个示例 system prompt",
                              consensus_blocks: list[dict] | None = None,
+                             branch_alternatives: list[dict] | None = None,
+                             stop_reason: str | None = "min_count",
                              preview: str = "你是一个示例 system prompt（前 500 字符 preview）") -> dict:
-    """Drop a synthetic section_4 + on-disk consensus_prefix.txt under model_dir.
+    """Drop a synthetic v1.3 section_4 + on-disk consensus_prefix.txt under model_dir.
 
     Returns the section_4 dict so callers can patch report.json themselves.
+    Block dicts use the v1.3 schema (freq / parent_freq / global_coverage_pct
+    / branch_ratio_pct); the renderer's alias bridge keeps v1.2 dicts also
+    rendering correctly (covered by test_render_app_report.py).
     """
     if consensus_blocks is None:
         consensus_blocks = [
-            {"rank": 1, "position": 0, "block_id": "111", "count": 50,
-             "coverage_pct": 100.0, "text_preview": "you are ...",
-             "truncated": True, "content_type_guess": "system_prompt"},
-            {"rank": 2, "position": 1, "block_id": "222", "count": 50,
-             "coverage_pct": 100.0, "text_preview": "tools: ...",
-             "truncated": True, "content_type_guess": "agent_tool_prompt"},
-            {"rank": 3, "position": 2, "block_id": "333", "count": 50,
-             "coverage_pct": 100.0, "text_preview": "you should ...",
-             "truncated": True, "content_type_guess": "system_prompt"},
+            {"rank": 1, "position": 0, "block_id": "111",
+             "freq": 50, "parent_freq": 50,
+             "global_coverage_pct": 100.0, "branch_ratio_pct": 100.0,
+             "text_preview": "you are ...", "truncated": True,
+             "content_type_guess": "system_prompt"},
+            {"rank": 2, "position": 1, "block_id": "222",
+             "freq": 50, "parent_freq": 50,
+             "global_coverage_pct": 100.0, "branch_ratio_pct": 100.0,
+             "text_preview": "tools: ...", "truncated": True,
+             "content_type_guess": "agent_tool_prompt"},
+            {"rank": 3, "position": 2, "block_id": "333",
+             "freq": 50, "parent_freq": 50,
+             "global_coverage_pct": 100.0, "branch_ratio_pct": 100.0,
+             "text_preview": "you should ...", "truncated": True,
+             "content_type_guess": "system_prompt"},
+        ]
+    if branch_alternatives is None:
+        branch_alternatives = [
+            {"block_id": "alt-A", "freq": 12, "fraction_of_parent": 0.24,
+             "decoded_text_preview": "alt branch A preview text"},
+            {"block_id": "alt-B", "freq": 8, "fraction_of_parent": 0.16,
+             "decoded_text_preview": "alt branch B preview text"},
         ]
     if full_text is not None:
         cp_dir = model_dir / "common_prefix"
@@ -241,12 +259,18 @@ def _write_section_4_fixture(model_dir: Path,
         (cp_dir / "consensus_prefix.txt").write_text(full_text, encoding="utf-8")
     return {
         "source": "common_prefix",
+        "algorithm": "trie_greedy_v1",
         "consensus_blocks": consensus_blocks,
         "prefix_length_blocks": 3,
         "prefix_length_chars": 384,
         "decoded_text_preview": preview,
         "min_count_threshold": 10,
+        "branch_threshold": 0.05,
+        "coverage_threshold": 0.0,
         "mean_coverage_pct": 95.5,
+        "stop_reason": stop_reason,
+        "stop_position": 3,
+        "branch_alternatives": branch_alternatives,
     }
 
 
@@ -265,8 +289,14 @@ def test_section_4_renders_full_text_from_disk(tmp_path: Path, renderer):
     # Full text from disk shown verbatim, not the 500-char preview.
     assert "完整 decoded text" in html
     assert "包含换行、标点、中文字符" in html
-    # Caveat present (always emitted until trie-greedy fix lands).
-    assert "幽灵链" in html
+    # Ghost-chain caveat removed in commit 4 (trie-greedy fix landed in v1.3).
+    assert "幽灵链" not in html
+    # v1.3: stop_reason surfaced in the metric strip; branch_alternatives
+    # rendered as a diagnostic table at the bottom of the section.
+    assert "Stop reason" in html
+    assert "min_count" in html
+    assert "分叉点替代项" in html
+    assert "alt-A" in html and "alt-B" in html
     # Per-block table is no longer rendered (header gone).
     assert "consensus blocks" not in html
     # Coverage chart container still in place (no PNG → 图缺失 fallback).
@@ -302,7 +332,7 @@ def test_section_4_falls_back_to_preview_when_disk_text_missing(
     html = renderer.render_one(outputs_root, "demo").read_text(encoding="utf-8")
     assert "回退至前 500 字符 preview" in html
     assert "fallback preview text" in html
-    assert "幽灵链" in html  # caveat still emitted in fallback path
+    assert "幽灵链" not in html  # caveat removed in commit 4 (trie-greedy lands)
 
 
 def test_section_4_handles_empty_consensus_blocks_no_dominant_type(

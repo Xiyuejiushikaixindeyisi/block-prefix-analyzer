@@ -358,6 +358,32 @@ def test_section_d_renders_consensus_blocks_and_overlap(renderer) -> None:
     assert "与模型 common_prefix 重叠" in html
 
 
+def test_section_d_renders_v13_stop_reason_and_branch_alternatives(renderer) -> None:
+    """v1.3 trie-greedy diagnostics: stop_reason in metric strip + branch
+    alternatives table at the bottom of app_consensus."""
+    report = _registered_app_report()
+    report["section_4_content"]["app_consensus"].update({
+        "algorithm": "trie_greedy_v1",
+        "stop_reason": "branch_threshold",
+        "stop_position": 8,
+        "branch_alternatives": [
+            {"block_id": "alt_x", "freq": 30,
+             "fraction_of_parent": 0.40,
+             "decoded_text_preview": "competing system prompt branch X"},
+            {"block_id": "alt_y", "freq": 20,
+             "fraction_of_parent": 0.27,
+             "decoded_text_preview": "competing system prompt branch Y"},
+        ],
+    })
+    html = renderer._render_app_html(report)
+    assert "Stop reason" in html
+    assert "branch_threshold" in html
+    assert "分叉点替代项" in html
+    assert "alt_x" in html
+    assert "alt_y" in html
+    assert "competing system prompt branch X" in html
+
+
 def test_app_history_table_rendered_when_history_present(renderer) -> None:
     html = renderer._render_app_html(_registered_app_report())
     assert "申请历史" in html
