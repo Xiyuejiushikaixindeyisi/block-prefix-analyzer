@@ -109,20 +109,16 @@ def test_render_one_writes_self_contained_html(tmp_path: Path, renderer):
     assert "<link " not in html.lower()
     assert "<script src=" not in html.lower()
 
-    # Has all 5 section headers.
+    # Has 4 content section headers (section 5 — auto-recommendations —
+    # is intentionally not rendered; see _render_model_html note).
     for tag in ("1. 理想命中率", "2. 流量业务模式", "3. KV cache",
-                "4. 可复用内容", "5. 优化建议"):
+                "4. 可复用内容"):
         assert tag in html
+    assert "5. 优化建议" not in html
 
     # Header carries meta.
     assert "demo" in html
     assert "block_size" in html
-
-    # Section 5 renders both rec and warning.
-    assert "R-PIN-CHAIN" in html
-    assert "W-SAME-SECOND" in html
-    assert "P0" in html
-    assert "Warning" in html
 
 
 def test_render_one_missing_report_raises(tmp_path: Path, renderer):
@@ -151,17 +147,31 @@ def test_render_one_handles_missing_sections_gracefully(tmp_path: Path, renderer
     assert "未生成" in html
 
 
-def test_render_one_handles_empty_recommendations(tmp_path: Path, renderer):
-    outputs_root = tmp_path / "out"
-    md = _write_minimal_report(outputs_root)
-    p = md / "report.json"
-    payload = json.loads(p.read_text(encoding="utf-8"))
-    payload["section_5_recommendations"] = []
-    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+def test_render_one_omits_section_5_recommendations(tmp_path: Path, renderer):
+    """Section 5 (auto-recommendations from the 9-rule engine) is not rendered.
 
+    Until a more rigorous rule set is designed, the HTML deliberately
+    suppresses this block — but report.json["section_5_recommendations"]
+    still carries the data, and the fixture in _write_minimal_report
+    populates it with R-PIN-CHAIN + W-SAME-SECOND. We assert that none
+    of those markers leak into the rendered HTML, while the underlying
+    data is preserved on disk.
+    """
+    outputs_root = tmp_path / "out"
+    md = _write_minimal_report(outputs_root)            # populates §5 in report.json
     out = renderer.render_one(outputs_root, "demo")
     html = out.read_text(encoding="utf-8")
-    assert "没有规则触发" in html
+    # Section header absent.
+    assert "5. 优化建议" not in html
+    # Rule IDs / category labels not leaked into HTML.
+    for marker in ("R-PIN-CHAIN", "W-SAME-SECOND", "P0 — 立即处理",
+                   "P1 — 中期规划", "Warning"):
+        assert marker not in html
+    # But report.json still carries the data for any downstream consumer.
+    payload = json.loads((md / "report.json").read_text(encoding="utf-8"))
+    rule_ids = {r.get("rule_id") for r in payload["section_5_recommendations"]}
+    assert "R-PIN-CHAIN" in rule_ids
+    assert "W-SAME-SECOND" in rule_ids
 
 
 # ---------------------------------------------------------------------------

@@ -972,12 +972,17 @@ def _render_model_html(model_id: str, model_dir: Path, report: dict) -> str:
     )
     rendered_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
+    # NOTE: section_5 (auto-recommendations from the 9-rule engine) is
+    # intentionally NOT rendered. The rule engine still runs in
+    # build_model_report.py and the data is kept in
+    # report.json["section_5_recommendations"]; only the HTML rendering
+    # is suppressed until a more rigorous rule set is designed. To
+    # re-enable, append `_section_5(report)` back to this list.
     sections = [
         _section_1(model_dir, report),
         _section_2(model_dir, report),
         _section_3(model_dir, report),
         _section_4(model_dir, report),
-        _section_5(report),
     ]
 
     return (

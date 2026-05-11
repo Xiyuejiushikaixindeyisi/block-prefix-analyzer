@@ -61,9 +61,18 @@
 
 派生视图 = 完全从前 4 维数据计算出的二级摘要，不消耗新数据来源。
 
-### 3.1 模型层派生：自动建议（`section_5_recommendations`）
+### 3.1 模型层派生：自动建议（`section_5_recommendations`）—— ⚠ HTML 渲染暂时下线（2026-05-11）
 
-9 条规则从前 4 个 section 数据自动派生，按 P0/P1/P2 + Warning 分组：
+> **当前状态**：rule engine 仍随 `build_model_report.py` 跑，数据仍写入
+> `report.json["section_5_recommendations"]`；但**模型 HTML 不再渲染此 section**。
+> 用户判断现有 9 条规则给出的建议**接近无价值**，等做了更严谨的研究后再设计针对模型 +
+> APP 的建设性规则集再上线。
+>
+> **回归条件**：新规则集 spec + 测试 fixture 落地后，把 `_section_5(report)` 加回
+> `_render_model_html` 的 `sections` 列表即可。`section_5_recommendations` 字段
+> 一直保留，下游分析（论文 / 报表）仍可消费。
+
+历史规则清单（保留以便未来重设计参考）：
 
 | Rule ID | 触发条件示例 | 优先级 |
 |---|---|---|
